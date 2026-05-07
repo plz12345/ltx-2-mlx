@@ -14,15 +14,14 @@ import mlx.core as mx
 
 from ltx_core_mlx.components.patchifiers import AudioPatchifier, VideoLatentPatchifier, compute_video_latent_shape
 from ltx_core_mlx.conditioning.types.latent_cond import (
-    LatentState,
     VideoConditionByLatentIndex,
-    create_initial_state,
 )
 from ltx_core_mlx.model.transformer.model import X0Model
 from ltx_core_mlx.utils.image import prepare_image_for_encoding
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_token_count, compute_video_positions
 from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
+from ltx_pipelines_mlx.utils.helpers import create_noised_state
 from ltx_pipelines_mlx.utils.samplers import denoise_loop
 from ltx_trainer_mlx.progress import SamplingContext
 
@@ -155,13 +154,33 @@ class ValidationSampler:
         video_positions = compute_video_positions(F, H, W, fps=config.frame_rate)
         audio_positions = compute_audio_positions(audio_T)
 
-        # Create initial noise states
-        video_state = create_initial_state(video_shape, config.seed, positions=video_positions)
-        audio_state = create_initial_state(audio_shape, config.seed + 1, positions=audio_positions)
-
-        # Apply image conditioning if provided
+        # Build image conditioning if provided.
+        video_conditionings: list[VideoConditionByLatentIndex] = []
         if config.condition_image is not None:
-            video_state = self._apply_image_conditioning(video_state, config, (F, H, W))
+            video_conditionings.append(self._build_image_conditioning(config))
+
+        # legacy_scalar_blend=True bit-matches the prior create_initial_state +
+        # apply_conditioning code path.
+        video_state = create_noised_state(
+            base_shape=video_shape,
+            conditionings=video_conditionings,
+            spatial_dims=(F, H, W),
+            positions=video_positions,
+            seed=config.seed,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
+        audio_state = create_noised_state(
+            base_shape=audio_shape,
+            conditionings=[],
+            spatial_dims=(F, H, W),  # unused
+            positions=audio_positions,
+            seed=config.seed + 1,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
 
         # Run denoising
         sigmas = DISTILLED_SIGMAS[: config.num_inference_steps + 1]
@@ -200,13 +219,8 @@ class ValidationSampler:
 
         return video_output, audio_output
 
-    def _apply_image_conditioning(
-        self,
-        video_state: LatentState,
-        config: GenerationConfig,
-        spatial_dims: tuple[int, int, int],
-    ) -> LatentState:
-        """Apply first-frame image conditioning to the video state."""
+    def _build_image_conditioning(self, config: GenerationConfig) -> VideoConditionByLatentIndex:
+        """Encode first-frame conditioning image and wrap it as a conditioning."""
         assert config.condition_image is not None
         assert self._vae_encoder is not None
 
@@ -222,13 +236,11 @@ class ValidationSampler:
         # Patchify the encoded image (single frame)
         patchified, _ = self._video_patchifier.patchify(encoded)
 
-        # Apply conditioning at first frame
-        cond = VideoConditionByLatentIndex(
+        return VideoConditionByLatentIndex(
             frame_indices=[0],
             clean_latent=patchified,
             strength=1.0,
         )
-        return cond.apply(video_state, spatial_dims)
 
     def _get_prompt_embeddings(self, config: GenerationConfig) -> tuple[mx.array, mx.array]:
         """Get prompt embeddings from cache or encode on-the-fly.

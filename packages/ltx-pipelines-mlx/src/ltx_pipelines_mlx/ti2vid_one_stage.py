@@ -14,8 +14,6 @@ from PIL import Image
 from ltx_core_mlx.components.patchifiers import AudioPatchifier, VideoLatentPatchifier, compute_video_latent_shape
 from ltx_core_mlx.conditioning.types.latent_cond import (
     VideoConditionByLatentIndex,
-    apply_conditioning,
-    create_initial_state,
 )
 from ltx_core_mlx.model.audio_vae.audio_vae import AudioVAEDecoder
 from ltx_core_mlx.model.audio_vae.bwe import VocoderWithBWE
@@ -29,6 +27,7 @@ from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_
 from ltx_core_mlx.utils.weights import apply_quantization, load_split_safetensors, remap_audio_vae_keys
 from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 from ltx_pipelines_mlx.utils.constants import DEFAULT_NEGATIVE_PROMPT
+from ltx_pipelines_mlx.utils.helpers import create_noised_state
 from ltx_pipelines_mlx.utils.samplers import denoise_loop
 
 
@@ -388,9 +387,28 @@ class TextToVideoPipeline:
         video_positions = compute_video_positions(F, H, W)
         audio_positions = compute_audio_positions(audio_T)
 
-        # Create initial noise with positions
-        video_state = create_initial_state(video_shape, seed, positions=video_positions)
-        audio_state = create_initial_state(audio_shape, seed + 1, positions=audio_positions)
+        # Create initial noise with positions (legacy_scalar_blend=True for
+        # bit-exact match with the prior create_initial_state code path).
+        video_state = create_noised_state(
+            base_shape=video_shape,
+            conditionings=[],
+            spatial_dims=(F, H, W),
+            positions=video_positions,
+            seed=seed,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
+        audio_state = create_noised_state(
+            base_shape=audio_shape,
+            conditionings=[],
+            spatial_dims=(F, H, W),  # unused
+            positions=audio_positions,
+            seed=seed + 1,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
 
         # Denoise
         sigmas = DISTILLED_SIGMAS[: num_steps + 1] if num_steps else DISTILLED_SIGMAS
@@ -556,14 +574,32 @@ class ImageToVideoPipeline(TextToVideoPipeline):
         video_positions = compute_video_positions(F, H, W)
         audio_positions = compute_audio_positions(audio_T)
 
-        # Create initial state with positions
-        video_state = create_initial_state(video_shape, seed, positions=video_positions)
-        audio_state = create_initial_state(audio_shape, seed + 1, positions=audio_positions)
-
-        # Apply I2V conditioning: preserve first frame
+        # I2V conditioning: preserve first frame (LatentIndex replace).
         ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
         condition = VideoConditionByLatentIndex(frame_indices=[0], clean_latent=ref_tokens)
-        video_state = apply_conditioning(video_state, [condition], (F, H, W))
+
+        # legacy_scalar_blend=True bit-matches legacy create_initial_state +
+        # apply_conditioning flow (sigma=1 on uniform mask + LatentIndex replace).
+        video_state = create_noised_state(
+            base_shape=video_shape,
+            conditionings=[condition],
+            spatial_dims=(F, H, W),
+            positions=video_positions,
+            seed=seed,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
+        audio_state = create_noised_state(
+            base_shape=audio_shape,
+            conditionings=[],
+            spatial_dims=(F, H, W),  # unused
+            positions=audio_positions,
+            seed=seed + 1,
+            sigma=1.0,
+            initial_latent=None,
+            legacy_scalar_blend=True,
+        )
 
         # Denoise
         sigmas = DISTILLED_SIGMAS[: num_steps + 1] if num_steps else DISTILLED_SIGMAS

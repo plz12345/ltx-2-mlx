@@ -129,6 +129,15 @@ def create_initial_state(
 ) -> LatentState:
     """Create initial latent state with pure noise.
 
+    .. note::
+        Pipelines should prefer
+        :func:`ltx_pipelines_mlx.utils.helpers.create_noised_state`
+        with ``initial_latent=None`` and ``legacy_scalar_blend=True`` —
+        it produces a bit-equivalent state and aligns with the upstream
+        ``init → cond → noise`` orchestration. This primitive is kept
+        for low-level testing and for ``retake`` / ``extend`` pipelines
+        that bypass the canonical helper.
+
     Args:
         shape: (B, N, C) shape for the latent.
         seed: Random seed.
@@ -154,6 +163,13 @@ def apply_conditioning(
     spatial_dims: tuple[int, int, int],
 ) -> LatentState:
     """Apply a list of conditioning items to the state.
+
+    .. note::
+        Pipelines should prefer
+        :func:`ltx_pipelines_mlx.utils.helpers.state_with_conditionings`,
+        which is identical in semantics and lives next to the rest of
+        the upstream-isomorphic orchestration helpers. This primitive
+        is kept for low-level testing.
 
     Args:
         state: Current latent state.
