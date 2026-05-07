@@ -5,7 +5,23 @@ from __future__ import annotations
 import mlx.core as mx
 
 from ltx_core_mlx.components.modality_tiling import VideoModalityTiler
+from ltx_core_mlx.model.transformer.modality import Modality
 from ltx_core_mlx.model.video_vae.tiling import DimensionTilingConfig, TileCountConfig
+
+
+def _make_modality(latent: mx.array, positions: mx.array, attention_mask: mx.array | None = None) -> Modality:
+    """Build a minimal Modality for tiler tests (timesteps, sigma, context filled with zeros)."""
+    B, T = latent.shape[0], latent.shape[1]
+    return Modality(
+        latent=latent,
+        sigma=mx.zeros((B,)),
+        timesteps=mx.zeros((B, T)),
+        positions=positions,
+        context=mx.zeros((B, 0, 0), dtype=latent.dtype),
+        enabled=True,
+        context_mask=None,
+        attention_mask=attention_mask,
+    )
 
 
 def _make_positions(F: int, H: int, W: int) -> mx.array:  # noqa: N803
@@ -38,12 +54,13 @@ class TestVideoModalityTiler:
 
         latent = mx.random.normal((1, T, D))
         positions = _make_positions(F, H, W)
+        modality = _make_modality(latent, positions)
         tile = tiler.tiles[0]
 
-        tiled, tiled_pos, _, ctx = tiler.tile(latent, positions, None, tile, normalize_positions=False)
-        assert tiled.shape == latent.shape
+        tiled, ctx = tiler.tile_modality(modality, tile, normalize_positions=False)
+        assert tiled.latent.shape == latent.shape
 
-        out = tiler.blend(tiled, tile, ctx)
+        out = tiler.blend(tiled.latent, tile, ctx)
         mx.eval(latent, out)
         assert mx.allclose(latent, out, atol=1e-6).item()
 
@@ -61,11 +78,12 @@ class TestVideoModalityTiler:
 
         latent = mx.random.normal((1, T, D))
         positions = _make_positions(F, H, W)
+        modality = _make_modality(latent, positions)
 
         output = mx.zeros_like(latent)
         for t in tiler.tiles:
-            tiled, _, _, ctx = tiler.tile(latent, positions, None, t, normalize_positions=False)
-            output = tiler.blend(tiled, t, ctx, output=output)
+            tiled, ctx = tiler.tile_modality(modality, t, normalize_positions=False)
+            output = tiler.blend(tiled.latent, t, ctx, output=output)
         mx.eval(latent, output)
         # No overlap → blend masks are all 1.0, sum gives back identity.
         assert mx.allclose(latent, output, atol=1e-6).item()
@@ -83,11 +101,12 @@ class TestVideoModalityTiler:
 
         latent = mx.random.normal((1, T, D))
         positions = _make_positions(F, H, W)
+        modality = _make_modality(latent, positions)
 
         output = mx.zeros_like(latent)
         for t in tiler.tiles:
-            tiled, _, _, ctx = tiler.tile(latent, positions, None, t, normalize_positions=False)
-            output = tiler.blend(tiled, t, ctx, output=output)
+            tiled, ctx = tiler.tile_modality(modality, t, normalize_positions=False)
+            output = tiler.blend(tiled.latent, t, ctx, output=output)
         mx.eval(latent, output)
         # Trapezoidal masks sum to 1 across the overlap → identity.
         assert mx.allclose(latent, output, atol=1e-5).item()
@@ -104,9 +123,11 @@ class TestVideoModalityTiler:
 
         latent = mx.zeros((1, F * H * W, 4))
         positions = _make_positions(F, H, W)
+        modality = _make_modality(latent, positions)
 
         for t in tiler.tiles:
-            _, tiled_pos, _, _ = tiler.tile(latent, positions, None, t, normalize_positions=True)
+            tiled, _ = tiler.tile_modality(modality, t, normalize_positions=True)
+            tiled_pos = tiled.positions
             num_tile_gen = (
                 (t.in_coords[0].stop - t.in_coords[0].start)
                 * (t.in_coords[1].stop - t.in_coords[1].start)
@@ -127,11 +148,12 @@ class TestVideoModalityTiler:
         latent = mx.zeros((1, T, 4))
         positions = _make_positions(F, H, W)
         full_mask = mx.random.normal((1, T, T))
+        modality = _make_modality(latent, positions, attention_mask=full_mask)
 
         tile = tiler.tiles[0]
-        tiled, _, tiled_mask, _ = tiler.tile(latent, positions, full_mask, tile)
-        assert tiled_mask is not None
-        assert tiled_mask.shape == (1, tiled.shape[1], tiled.shape[1])
+        tiled, _ = tiler.tile_modality(modality, tile)
+        assert tiled.attention_mask is not None
+        assert tiled.attention_mask.shape == (1, tiled.latent.shape[1], tiled.latent.shape[1])
 
     def test_cond_tokens_kept_by_overlap(self):
         """Conditioning tokens whose point coords fall in the tile range
@@ -145,11 +167,12 @@ class TestVideoModalityTiler:
 
         tiling = TileCountConfig(height=DimensionTilingConfig(num_tiles=2, overlap=0))
         tiler = VideoModalityTiler(tiling, latent_shape=(F, H, W))
+        modality = _make_modality(latent, positions)
 
         # First tile covers h=[0,2): only the first cond (h=0) is kept.
         # Second tile covers h=[2,4): only the second cond (h=3) is kept.
         for t in tiler.tiles:
-            _, _, _, ctx = tiler.tile(latent, positions, None, t)
+            _, ctx = tiler.tile_modality(modality, t)
             cond_keep = ctx.keep_mask[T_gen:]
             mx.eval(cond_keep)
             assert int(cond_keep.sum().item()) == 1

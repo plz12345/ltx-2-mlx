@@ -43,6 +43,7 @@ from dataclasses import dataclass
 import mlx.core as mx
 import numpy as np
 
+from ltx_core_mlx.model.transformer.modality import Modality
 from ltx_core_mlx.model.video_vae.tiling import (
     Tile,
     TileCountConfig,
@@ -178,37 +179,44 @@ class VideoModalityTiler:
         mask[self._num_generated_tokens :] = keep_cond
         return mask
 
-    def tile(
+    def tile_modality(
         self,
-        latent: mx.array,
-        positions: mx.array,
-        attention_mask: mx.array | None,
+        modality: Modality,
         tile: Tile,
         normalize_positions: bool = True,
-    ) -> tuple[mx.array, mx.array, mx.array | None, TileContext]:
-        """Slice ``latent`` / ``positions`` / ``attention_mask`` to ``tile``.
+    ) -> tuple[Modality, TileContext]:
+        """Slice ``modality`` to the tokens covered by ``tile``.
+
+        Mirrors upstream ``VideoModalityTilingHelper.tile_modality``
+        signature. Returns a new :class:`Modality` for the tile + an
+        opaque :class:`TileContext` to pass back to :meth:`blend`.
 
         Args:
-            latent: ``(B, T, D)`` flat token sequence (generated tokens
-                followed by appended conditioning tokens).
-            positions: ``(B, T, num_axes)`` per-token point positions.
-            attention_mask: optional ``(B, T, T)`` self-attention mask
-                in ``[0, 1]``.
+            modality: input modality. ``modality.latent``, ``timesteps``,
+                and ``positions`` are sliced to the tile; ``sigma``,
+                ``context``, ``context_mask``, and ``enabled`` are
+                forwarded unchanged. ``attention_mask``, when present,
+                is reduced to the kept tokens x kept tokens submatrix.
             tile: which tile to extract (one of :attr:`tiles`).
             normalize_positions: when True, shift positions so the
                 tile's generated tokens start at zero on every axis.
 
         Returns:
-            ``(tiled_latent, tiled_positions, tiled_attention_mask, ctx)``.
-            ``ctx`` is opaque; pass it to :meth:`blend` together with
-            the model's output.
+            ``(tiled_modality, context)``. ``context`` carries the
+            keep mask and per-cond-token blend weights needed by
+            :meth:`blend`.
         """
+        latent = modality.latent
+        positions = modality.positions
+        attention_mask = modality.attention_mask
+
         num_total = latent.shape[1]
         keep_mask = self._keep_mask(num_total, positions, tile)
         keep_idx = _bool_to_indices(keep_mask)
 
         tiled_latent = latent[:, keep_idx, :]
         tiled_positions = positions[:, keep_idx, :]
+        tiled_timesteps = modality.timesteps[:, keep_idx]
         if normalize_positions:
             num_tile_gen = self._tile_generated_token_count(tile)
             offset = tiled_positions[:, :num_tile_gen, :].min(axis=1, keepdims=True)
@@ -233,12 +241,17 @@ class VideoModalityTiler:
                     cond_counts = cond_counts + other_cond[cond_keep_idx_in_full].astype(mx.float32)
                 cond_blend_weights = 1.0 / cond_counts
 
-        return (
-            tiled_latent,
-            tiled_positions,
-            tiled_attention_mask,
-            TileContext(keep_mask=keep_mask, cond_blend_weights=cond_blend_weights),
+        tiled = Modality(
+            latent=tiled_latent,
+            sigma=modality.sigma,
+            timesteps=tiled_timesteps,
+            positions=tiled_positions,
+            context=modality.context,
+            enabled=modality.enabled,
+            context_mask=modality.context_mask,
+            attention_mask=tiled_attention_mask,
         )
+        return tiled, TileContext(keep_mask=keep_mask, cond_blend_weights=cond_blend_weights)
 
     def blend(
         self,
@@ -327,61 +340,72 @@ class TiledLTXModel:
         if args:
             raise TypeError("TiledLTXModel expects keyword arguments only")
 
-        video_latent = kwargs["video_latent"]
-        audio_latent = kwargs["audio_latent"]
-        video_positions = kwargs.get("video_positions")
-        video_attention_mask = kwargs.get("video_attention_mask")
-        video_timesteps = kwargs.get("video_timesteps")
-
-        if video_positions is None:
-            raise ValueError("TiledLTXModel requires video_positions to be provided.")
+        # Adapt: build a video Modality from per-arg kwargs. Our
+        # pipelines pass (latent, positions, mask, ...) separately;
+        # the tiler API takes Modality (isomorphic with upstream).
+        # This boundary-layer adapter wraps then unwraps.
+        video_modality = self._build_video_modality(kwargs)
 
         video_out: mx.array | None = None
         audio_outs: list[mx.array] = []
 
         for tile in self._tiler.tiles:
-            (
-                tiled_video,
-                tiled_video_pos,
-                tiled_video_mask,
-                ctx,
-            ) = self._tiler.tile(
-                video_latent,
-                video_positions,
-                video_attention_mask,
-                tile,
-                normalize_positions=False,
-            )
-
-            tiled_video_timesteps = None
-            if video_timesteps is not None:
-                # video_timesteps is (B, T) — slice with the same keep_mask
-                # as the latent so per-token timesteps stay aligned.
-                keep_idx = _bool_to_indices(ctx.keep_mask)
-                tiled_video_timesteps = video_timesteps[:, keep_idx]
+            tiled_modality, ctx = self._tiler.tile_modality(video_modality, tile, normalize_positions=False)
 
             tile_kwargs = dict(kwargs)
-            tile_kwargs["video_latent"] = tiled_video
-            tile_kwargs["audio_latent"] = audio_latent
-            tile_kwargs["video_positions"] = tiled_video_pos
-            tile_kwargs["video_attention_mask"] = tiled_video_mask
-            if video_timesteps is not None:
-                tile_kwargs["video_timesteps"] = tiled_video_timesteps
+            tile_kwargs["video_latent"] = tiled_modality.latent
+            tile_kwargs["video_positions"] = tiled_modality.positions
+            tile_kwargs["video_attention_mask"] = tiled_modality.attention_mask
+            if "video_timesteps" in kwargs and kwargs["video_timesteps"] is not None:
+                tile_kwargs["video_timesteps"] = tiled_modality.timesteps
 
             tile_video_out, tile_audio_out = self._inner(**tile_kwargs)
 
             video_out = self._tiler.blend(tile_video_out, tile, ctx, output=video_out)
             audio_outs.append(tile_audio_out)
 
-        # Average audio across tiles. Each tile saw the full audio so its
-        # audio output is a complete prediction; averaging absorbs the
-        # variation introduced by the differing video context.
         if len(audio_outs) == 1:
             audio_out = audio_outs[0]
         else:
             audio_out = mx.mean(mx.stack(audio_outs, axis=0), axis=0)
 
         return video_out, audio_out
+
+    @staticmethod
+    def _build_video_modality(kwargs: dict) -> Modality:
+        """Adapter: assemble a video Modality from LTXModel.__call__ kwargs.
+
+        Fills missing per-token timesteps from the scalar ``timestep``
+        when not supplied. Defaults context_mask to None.
+        """
+        latent = kwargs["video_latent"]
+        positions = kwargs.get("video_positions")
+        attention_mask = kwargs.get("video_attention_mask")
+        timesteps = kwargs.get("video_timesteps")
+        sigma = kwargs.get("timestep")
+        context = kwargs.get("video_text_embeds")
+
+        if positions is None:
+            raise ValueError("TiledLTXModel requires video_positions to be provided.")
+        if sigma is None:
+            raise ValueError("TiledLTXModel requires timestep to be provided.")
+
+        if timesteps is None:
+            # Broadcast scalar sigma to per-token timesteps so the
+            # tiler can slice them with the keep_mask just like the
+            # latent.
+            timesteps = mx.broadcast_to(sigma[:, None], (latent.shape[0], latent.shape[1]))
+
+        return Modality(
+            latent=latent,
+            sigma=sigma,
+            timesteps=timesteps,
+            positions=positions,
+            context=context if context is not None else mx.zeros((latent.shape[0], 0, 0), dtype=latent.dtype),
+            enabled=True,
+            context_mask=None,
+            attention_mask=attention_mask,
+        )
 
     def __getattr__(self, name: str):
         # Proxy other attribute reads (e.g. ``self.config``) to the inner model.
