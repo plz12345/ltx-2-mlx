@@ -40,12 +40,60 @@ def _add_base_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
 
 
+def _build_tile_count_config(args: argparse.Namespace):
+    """Return a TileCountConfig from --tile-frames / --tile-spatial / --tile-overlap.
+
+    Returns None if both frames and spatial are 1 (no tiling).
+    """
+    frames_n = getattr(args, "tile_frames", 1)
+    spatial_n = getattr(args, "tile_spatial", 1)
+    overlap = getattr(args, "tile_overlap", 2)
+    if frames_n <= 1 and spatial_n <= 1:
+        return None
+    from ltx_core_mlx.model.video_vae.tiling import DimensionTilingConfig, TileCountConfig
+
+    return TileCountConfig(
+        frames=DimensionTilingConfig(num_tiles=frames_n, overlap=overlap if frames_n > 1 else 0),
+        height=DimensionTilingConfig(num_tiles=spatial_n, overlap=overlap if spatial_n > 1 else 0),
+        width=DimensionTilingConfig(num_tiles=spatial_n, overlap=overlap if spatial_n > 1 else 0),
+    )
+
+
 def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     """Add generation-specific arguments (dimensions, steps) on top of base args."""
     _add_base_args(parser)
     parser.add_argument("--height", "-H", type=int, default=480, help="Video height (default: 480)")
     parser.add_argument("--width", "-W", type=int, default=704, help="Video width (default: 704)")
     parser.add_argument("--frames", "-f", type=int, default=97, help="Number of frames (default: 97)")
+    parser.add_argument(
+        "--tile-frames",
+        type=int,
+        default=1,
+        help=(
+            "Number of temporal tiles for modality tiling (default: 1 = no tiling). "
+            "Each tile is denoised independently and blended back. Trades wall-clock "
+            "for peak memory. Combine with --low-ram for max savings."
+        ),
+    )
+    parser.add_argument(
+        "--tile-spatial",
+        type=int,
+        default=1,
+        help=(
+            "Number of spatial tiles per axis (height and width). 2 = 2x2 = 4 spatial "
+            "tiles. Combined with --tile-frames N gives N*S*S tiles total. Default: 1."
+        ),
+    )
+    parser.add_argument(
+        "--tile-overlap",
+        type=int,
+        default=2,
+        help=(
+            "Token-grid overlap between adjacent tiles (default: 2). Higher overlap "
+            "= smoother blend but more redundant compute. Ignored when both "
+            "--tile-frames and --tile-spatial are 1."
+        ),
+    )
     parser.add_argument(
         "--low-ram",
         action="store_true",
@@ -335,6 +383,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             dev_transformer=args.dev_transformer,
             distilled_lora=args.distilled_lora,
             distilled_lora_strength=args.distilled_lora_strength,
+            tile_count=_build_tile_count_config(args),
         )
         if lora_paths:
             pipe._pending_loras = lora_paths

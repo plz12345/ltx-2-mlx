@@ -153,3 +153,53 @@ class TestVideoModalityTiler:
             cond_keep = ctx.keep_mask[T_gen:]
             mx.eval(cond_keep)
             assert int(cond_keep.sum().item()) == 1
+
+
+class TestTiledLTXModel:
+    def test_single_tile_matches_baseline(self):
+        """Wrapping a model in TiledLTXModel with a 1x1x1 tiler must
+        produce the same output as the bare model (single tile == identity)."""
+        from ltx_core_mlx.components.modality_tiling import TiledLTXModel
+        from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig
+
+        cfg = LTXModelConfig(
+            num_layers=2,
+            video_dim=32,
+            audio_dim=16,
+            video_num_heads=4,
+            audio_num_heads=4,
+            video_head_dim=8,
+            audio_head_dim=4,
+            av_cross_num_heads=4,
+            av_cross_head_dim=4,
+            video_patch_channels=8,
+            audio_patch_channels=8,
+            ff_mult=2.0,
+            timestep_embedding_dim=32,
+        )
+        mx.random.seed(7)
+        model = LTXModel(cfg)
+        mx.eval(model.parameters())
+
+        # Pixel-space: F=1, H=1, W=16 → 16 tokens (single time/height row).
+        F, H, W = 1, 1, 16
+        Nv, Na, Nt = F * H * W, 4, 4
+        common = dict(
+            video_latent=mx.random.normal((1, Nv, cfg.video_patch_channels)).astype(mx.bfloat16),
+            audio_latent=mx.random.normal((1, Na, cfg.audio_patch_channels)).astype(mx.bfloat16),
+            timestep=mx.array([0.5]),
+            video_text_embeds=mx.random.normal((1, Nt, cfg.video_dim)).astype(mx.bfloat16),
+            audio_text_embeds=mx.random.normal((1, Nt, cfg.audio_dim)).astype(mx.bfloat16),
+            video_positions=_make_positions(F, H, W),
+            audio_positions=mx.zeros((1, Na, 1)),
+        )
+
+        baseline_v, baseline_a = model(**common)
+
+        tiler = VideoModalityTiler(TileCountConfig(), latent_shape=(F, H, W))
+        wrapped = TiledLTXModel(model, tiler)
+        wrapped_v, wrapped_a = wrapped(**common)
+
+        mx.eval(baseline_v, baseline_a, wrapped_v, wrapped_a)
+        assert mx.allclose(baseline_v, wrapped_v, atol=1e-5, rtol=1e-5).item()
+        assert mx.allclose(baseline_a, wrapped_a, atol=1e-5, rtol=1e-5).item()

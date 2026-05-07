@@ -125,6 +125,7 @@ class TwoStagePipeline(TextToVideoPipeline):
         dev_transformer: str = "transformer-dev.safetensors",
         distilled_lora: str = "ltx-2.3-22b-distilled-lora-384.safetensors",
         distilled_lora_strength: float = 1.0,
+        tile_count=None,
     ):
         super().__init__(
             model_dir,
@@ -135,6 +136,7 @@ class TwoStagePipeline(TextToVideoPipeline):
         self._dev_transformer = dev_transformer
         self._distilled_lora = distilled_lora
         self._distilled_lora_strength = distilled_lora_strength
+        self._tile_count = tile_count
         self.upsampler: LatentUpsampler | None = None
 
     def _fuse_distilled_lora(self, dit: LTXModel) -> None:
@@ -391,7 +393,18 @@ class TwoStagePipeline(TextToVideoPipeline):
         # Stage 1 sigma schedule (dynamic for dev model)
         num_tokens = F * H_half * W_half
         sigmas_1 = ltx2_schedule(stage1_steps, num_tokens=num_tokens)
-        x0_model = X0Model(self.dit)
+
+        # Optional modality tiling: split video tokens into spatial/temporal
+        # tiles for memory savings on long videos. Audio is replicated
+        # across tiles. Composes with low_ram_streaming.
+        stage1_dit = self.dit
+        if self._tile_count is not None:
+            from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
+
+            tiler_1 = VideoModalityTiler(self._tile_count, latent_shape=(F, H_half, W_half))
+            stage1_dit = TiledLTXModel(self.dit, tiler_1)
+
+        x0_model = X0Model(stage1_dit)
 
         # Build guider params
         if video_guider_params is None:
@@ -512,8 +525,18 @@ class TwoStagePipeline(TextToVideoPipeline):
             initial_latent=audio_tokens_1,
         )
 
+        # Stage 2 reuses the same x0_model as stage 1 by default. With
+        # modality tiling enabled, stage 2 has a different latent shape
+        # (full resolution) so we need a fresh tiler+wrapper.
+        stage2_x0_model = x0_model
+        if self._tile_count is not None:
+            from ltx_core_mlx.components.modality_tiling import TiledLTXModel, VideoModalityTiler
+
+            tiler_2 = VideoModalityTiler(self._tile_count, latent_shape=(F, H_full, W_full))
+            stage2_x0_model = X0Model(TiledLTXModel(self.dit, tiler_2))
+
         output_2 = denoise_loop(
-            model=x0_model,
+            model=stage2_x0_model,
             video_state=video_state_2,
             audio_state=audio_state_2,
             video_text_embeds=video_embeds,

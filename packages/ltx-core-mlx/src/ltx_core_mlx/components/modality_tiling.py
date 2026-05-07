@@ -292,3 +292,103 @@ class VideoModalityTiler:
             output[:, cond_idx_full, :] = output[:, cond_idx_full, :] + cond_part
 
         return output
+
+
+class TiledLTXModel:
+    """Drop-in LTXModel wrapper that tiles the video forward across spatial/temporal regions.
+
+    Iterates over :attr:`VideoModalityTiler.tiles`; for each tile it
+    slices the video-relevant args (latent, positions, attention_mask,
+    optional per-token timesteps) and calls the wrapped model with the
+    tiled video + the full audio. Outputs are accumulated:
+
+    - Video velocity / x0: blended via :meth:`VideoModalityTiler.blend`
+      with trapezoidal weights at overlaps.
+    - Audio velocity / x0: averaged across tiles (the audio path is
+      replicated in each tile call, so per-tile outputs differ only in
+      the joint audio↔video cross-attention contribution).
+
+    Composes with :class:`~ltx_core_mlx.loader.block_streaming.StreamingLTXModel`:
+    wrap the dev/distilled LTXModel in TiledLTXModel, then optionally
+    in StreamingLTXModel (or vice versa — order doesn't matter, both
+    intercept ``__call__`` and forward to ``self.inner``).
+
+    Args:
+        inner: An ``LTXModel`` (or another wrapper around it) — anything
+            whose ``__call__`` signature matches LTXModel's.
+        tiler: A pre-built :class:`VideoModalityTiler`.
+    """
+
+    def __init__(self, inner, tiler: VideoModalityTiler) -> None:
+        self._inner = inner
+        self._tiler = tiler
+
+    def __call__(self, *args, **kwargs):
+        if args:
+            raise TypeError("TiledLTXModel expects keyword arguments only")
+
+        video_latent = kwargs["video_latent"]
+        audio_latent = kwargs["audio_latent"]
+        video_positions = kwargs.get("video_positions")
+        video_attention_mask = kwargs.get("video_attention_mask")
+        video_timesteps = kwargs.get("video_timesteps")
+
+        if video_positions is None:
+            raise ValueError("TiledLTXModel requires video_positions to be provided.")
+
+        video_out: mx.array | None = None
+        audio_outs: list[mx.array] = []
+
+        for tile in self._tiler.tiles:
+            (
+                tiled_video,
+                tiled_video_pos,
+                tiled_video_mask,
+                ctx,
+            ) = self._tiler.tile(
+                video_latent,
+                video_positions,
+                video_attention_mask,
+                tile,
+                normalize_positions=False,
+            )
+
+            tiled_video_timesteps = None
+            if video_timesteps is not None:
+                # video_timesteps is (B, T) — slice with the same keep_mask
+                # as the latent so per-token timesteps stay aligned.
+                keep_idx = _bool_to_indices(ctx.keep_mask)
+                tiled_video_timesteps = video_timesteps[:, keep_idx]
+
+            tile_kwargs = dict(kwargs)
+            tile_kwargs["video_latent"] = tiled_video
+            tile_kwargs["audio_latent"] = audio_latent
+            tile_kwargs["video_positions"] = tiled_video_pos
+            tile_kwargs["video_attention_mask"] = tiled_video_mask
+            if video_timesteps is not None:
+                tile_kwargs["video_timesteps"] = tiled_video_timesteps
+
+            tile_video_out, tile_audio_out = self._inner(**tile_kwargs)
+
+            video_out = self._tiler.blend(tile_video_out, tile, ctx, output=video_out)
+            audio_outs.append(tile_audio_out)
+
+        # Average audio across tiles. Each tile saw the full audio so its
+        # audio output is a complete prediction; averaging absorbs the
+        # variation introduced by the differing video context.
+        if len(audio_outs) == 1:
+            audio_out = audio_outs[0]
+        else:
+            audio_out = mx.mean(mx.stack(audio_outs, axis=0), axis=0)
+
+        return video_out, audio_out
+
+    def __getattr__(self, name: str):
+        # Proxy other attribute reads (e.g. ``self.config``) to the inner model.
+        if name in {"_inner", "_tiler"}:
+            raise AttributeError(name)
+        try:
+            inner = object.__getattribute__(self, "_inner")
+        except AttributeError as e:
+            raise AttributeError(name) from e
+        return getattr(inner, name)
