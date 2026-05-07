@@ -61,6 +61,13 @@ class TextToVideoPipeline:
         self.low_ram_streaming = low_ram_streaming
         self._loaded = False
 
+        if self.low_ram_streaming:
+            # Disable Metal heap cache before any allocation. With cache enabled,
+            # MLX retains "recently freed" buffers in a heap that defeats
+            # streaming on macOS unified memory. Setting before any module load
+            # ensures Gemma + decoder allocations also benefit.
+            mx.set_cache_limit(0)
+
         self._dev_transformer: str | None = None
 
         # Components (lazy-loaded)
