@@ -88,8 +88,7 @@ class DistilledPipeline(TwoStagePipeline):
 
         if self.dit is None:
             if self.low_memory:
-                self.text_encoder = None
-                aggressive_cleanup()
+                self.prompt_encoder.free()
             transformer_path = self.model_dir / "transformer.safetensors"
             if not transformer_path.exists():
                 transformer_path = self.model_dir / "transformer-distilled.safetensors"

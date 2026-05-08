@@ -37,7 +37,6 @@ from ltx_core_mlx.loader import (
 )
 from ltx_core_mlx.model.transformer.model import X0Model
 from ltx_core_mlx.model.upsampler import LatentUpsampler
-from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder
 from ltx_core_mlx.utils.image import prepare_image_for_encoding
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_token_count, compute_video_positions
@@ -79,7 +78,8 @@ class ICLoraPipeline(BasePipeline):
             low_memory=low_memory,
             low_ram_streaming=low_ram_streaming,
         )
-        self.vae_encoder: VideoEncoder | None = None
+        # `vae_encoder` is provided as a property by BasePipeline (proxies
+        # to the ImageConditioner block). Only `upsampler` is unique here.
         self.upsampler: LatentUpsampler | None = None
 
         # Resolve LoRA paths (download from HuggingFace if needed)

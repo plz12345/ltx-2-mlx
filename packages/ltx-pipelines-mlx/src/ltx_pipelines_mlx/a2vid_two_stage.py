@@ -169,11 +169,9 @@ class AudioToVideoPipeline(TwoStagePipeline):
         audio_tokens, _ = self.audio_patchifier.patchify(audio_latent)  # (1, audio_T, 128)
         mx.synchronize()
 
-        # Free audio encoder
+        # Free audio encoder via composition block
         if self.low_memory:
-            self.audio_encoder = None
-            self.audio_processor = None
-            aggressive_cleanup()
+            self.audio_conditioner.free()
 
         # --- Text encoding (positive + negative for CFG) ---
         video_embeds, audio_embeds, neg_video_embeds, neg_audio_embeds = self._encode_text_with_negative(prompt)
