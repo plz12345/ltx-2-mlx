@@ -15,6 +15,7 @@ see [README.md](../README.md).
 | `generate` | `TextToVideoPipeline` | T2V / I2V | Euler distilled (8 steps) | — | q8 | ❌ | — |
 | `generate --two-stage` | `TwoStagePipeline` | T2V / I2V | Euler + CFG (30 steps) | Euler distilled (3 steps) | q8 + dev LoRA | ✅ | 0.0 |
 | `generate --hq` | `TwoStageHQPipeline` | T2V / I2V | res_2s + CFG (15 steps × 2 sub-steps) | Euler distilled (3) | q8 + dev LoRA | ✅ | 0.0 |
+| `generate --distilled` | `DistilledPipeline` | T2V / I2V | Euler distilled (8 steps) at half-res | Euler distilled (3) at full-res | q8 (distilled only) | ❌ | — |
 | `a2v` | A2V two-stage | A2V (+ optional I2V) | Euler + CFG (30) | Euler distilled (3) | q8 + dev LoRA | ✅ (audio cfg=7) | 0.0 |
 | `a2v --hq` | A2V HQ (res_2s) | A2V (+ optional I2V) | res_2s + CFG (15) | Euler distilled (3) | q8 + dev LoRA | ✅ | 0.0 |
 | `keyframe` | `KeyframeInterpolationPipeline` | start frame ↔ end frame | Euler + CFG (30) | Euler distilled (3) | q8 + dev LoRA | ✅ | 0.0 |
@@ -45,6 +46,7 @@ see [README.md](../README.md).
 | `generate` (one-stage) | `--steps` (default 8), `--lora PATH STRENGTH` (incompatible with `--low-ram`), `--image`, `--enhance-prompt`, `--cfg-scale`, `--stg-scale`, `--rescale-scale` |
 | `generate --two-stage` | `--stage1-steps` (30), `--stage2-steps` (3), `--cfg-scale` (3.0), `--stg-scale` (0.0), `--image`, `--distilled-lora-strength` (1.0), `--enable-teacache`, `--teacache-thresh` |
 | `generate --hq` | same as two-stage but stage1 default 15 steps, res_2s sampler |
+| `generate --distilled` | `--stage1-steps` (8 default), `--stage2-steps` (3 default), `--image`. No CFG/STG/TeaCache flags (distilled flow). Same DiT in both stages — no LoRA swap. |
 | `a2v` | `--audio` (required), `--image`, `--audio-start`, `--fps`, `--hq`, all two-stage flags |
 | `keyframe` | `--start` / `--end` (image paths, required), `--fps`, all two-stage flags |
 | `ic-lora` | `--lora PATH STRENGTH` (required, repeatable), `--video-conditioning PATH STRENGTH` (required, repeatable), `--conditioning-strength` (1.0), `--image`, `--skip-stage-2`, `--stage1-steps`, `--stage2-steps` |
@@ -59,3 +61,4 @@ see [README.md](../README.md).
 - TeaCache calibration is sampler-specific (Euler vs res_2s). Don't reuse coefficients across `--two-stage` and `--hq`.
 - HDR LoRA can be combined with regular IC-LoRA control LoRAs in theory but untested — single HDR LoRA per pipeline is the validated path.
 - Modality tiling overhead dominates over memory benefit at default Nv (1650-3168). Use only when targeting 1080p / 8s+ on Mac Studio 64-128 GB; on 32 GB Mac, prefer `--low-ram` alone.
+- `generate` (no flag) vs `generate --distilled`: the no-flag path runs distilled at the **target resolution** in one pass (8 steps). `--distilled` runs distilled at **half resolution** (8 steps) then upscales 2× and refines (3 steps), mirroring upstream `DistilledPipeline`. Use `--distilled` when target res > 480×704 and direct one-stage output shows OOD artifacts; otherwise the simpler one-stage suffices.

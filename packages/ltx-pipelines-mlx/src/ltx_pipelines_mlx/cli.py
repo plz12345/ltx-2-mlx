@@ -146,6 +146,11 @@ examples:
         help="Two-stage pipeline: dev model + CFG at half-res, upscale, distilled LoRA refine (requires q8 model)",
     )
     gen.add_argument("--hq", action="store_true", help="HQ two-stage pipeline (res_2s sampler for stage 1)")
+    gen.add_argument(
+        "--distilled",
+        action="store_true",
+        help="Distilled two-stage pipeline (half-res distilled + upscale + distilled refine, no CFG). Mirrors upstream DistilledPipeline.",
+    )
     gen.add_argument("--stage1-steps", type=int, default=None, help="Stage 1 steps (default: 30 standard, 15 HQ)")
     gen.add_argument("--stage2-steps", type=int, default=None, help="Stage 2 steps (default: 3)")
     gen.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
@@ -399,7 +404,41 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             "TeaCache (only 8 denoising steps)."
         )
 
-    if args.hq or args.two_stage:
+    if sum(map(bool, (args.hq, args.two_stage, args.distilled))) > 1:
+        raise SystemExit("Choose at most one of --two-stage, --hq, --distilled.")
+
+    if args.distilled:
+        from ltx_pipelines_mlx.distilled import DistilledPipeline
+
+        if not args.quiet:
+            print("Mode: Distilled Two-Stage (half-res + upscale + distilled refine)")
+            print(f"  Model: {args.model}")
+
+        pipe = DistilledPipeline(
+            model_dir=args.model,
+            gemma_model_id=args.gemma,
+            low_memory=True,
+            low_ram_streaming=getattr(args, "low_ram", False),
+            tile_count=_build_tile_count_config(args),
+        )
+        if lora_paths:
+            pipe._pending_loras = lora_paths
+        kwargs: dict = dict(
+            prompt=prompt,
+            output_path=args.output,
+            height=args.height,
+            width=args.width,
+            num_frames=args.frames,
+            seed=args.seed,
+            image=args.image,
+        )
+        if args.stage1_steps is not None:
+            kwargs["stage1_steps"] = args.stage1_steps
+        if args.stage2_steps is not None:
+            kwargs["stage2_steps"] = args.stage2_steps
+        pipe.generate_and_save(**kwargs)
+
+    elif args.hq or args.two_stage:
         if args.hq:
             from ltx_pipelines_mlx.ti2vid_two_stages_hq import TwoStageHQPipeline as PipeClass
 
