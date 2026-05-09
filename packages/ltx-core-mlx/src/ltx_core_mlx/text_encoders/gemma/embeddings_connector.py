@@ -330,9 +330,6 @@ class Embeddings1DConnector(nn.Module):
         # otherwise concatenate into a single dispatch that exceeds the
         # 10 s threshold under sustained system contention (Spotlight,
         # Siri, mds_stores, knowledgeconstructiond). No-op on >48 GB.
-        # LTX2_METAL_WATCHDOG_GUARD=1 layers an mx.synchronize on top.
-        from ltx_core_mlx.utils.metal_watchdog import flush as _watchdog_flush
-
         _split_per_block = mx.device_info()["memory_size"] <= 48 * 1024**3
         _mx_eval = getattr(mx, "eval")  # noqa: B009 -- security hook flags mx.eval pattern
 
@@ -340,7 +337,6 @@ class Embeddings1DConnector(nn.Module):
             hidden_states = block(hidden_states, rope_freqs=rope_freqs, attention_mask=attn_mask)
             if _split_per_block:
                 _mx_eval(hidden_states)
-            _watchdog_flush(hidden_states)
 
         # Optional output normalization (affine-free)
         if self.norm_output:

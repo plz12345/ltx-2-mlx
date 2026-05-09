@@ -52,7 +52,6 @@ from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder as _VideoVAEEnco
 from ltx_core_mlx.text_encoders.gemma.encoders.base_encoder import GemmaLanguageModel
 from ltx_core_mlx.text_encoders.gemma.feature_extractor import GemmaFeaturesExtractorV2
 from ltx_core_mlx.utils.memory import aggressive_cleanup
-from ltx_core_mlx.utils.metal_watchdog import flush as _watchdog_flush
 from ltx_core_mlx.utils.weights import load_split_safetensors, remap_audio_vae_keys
 
 _materialize = getattr(mx, "eval")  # noqa: B009 -- security hook flags the literal mx.eval pattern
@@ -119,7 +118,6 @@ class PromptEncoder:
 
         max_length = int(os.environ.get("LTX2_GEMMA_MAX_LENGTH", "1024"))
         all_hidden_states, attention_mask = self._text_encoder.encode_all_layers(prompt, max_length=max_length)
-        _watchdog_flush(all_hidden_states[-1])
         video_embeds, audio_embeds = self._feature_extractor(all_hidden_states, attention_mask=attention_mask)
         return video_embeds, audio_embeds
 

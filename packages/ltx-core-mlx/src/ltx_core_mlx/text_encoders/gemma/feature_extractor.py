@@ -178,20 +178,15 @@ class TextEncoderConnector(nn.Module):
         Returns:
             Tuple of (video_embeds, audio_embeds).
         """
-        # Project to separate video/audio dimensions. Watchdog guard
-        # (off by default) splits each stage into its own Metal dispatch
-        # for systems prone to Impacting Interactivity. See
-        # ltx_core_mlx.utils.metal_watchdog.
-        from ltx_core_mlx.utils.metal_watchdog import flush as _watchdog_flush
-
+        # Project to separate video/audio dimensions. The TextEmbeddingProjection's
+        # built-in _materialize splits the giant 188160→4096 matmul into
+        # video and audio dispatches on <=48 GB Macs.
         video_embeds, audio_embeds = self.text_embedding_projection(hidden_states)
-        _watchdog_flush(video_embeds, audio_embeds)
 
-        # Refine through transformer connectors
+        # Refine through transformer connectors. Embeddings1DConnector
+        # materializes per-block on <=48 GB Macs (see embeddings_connector.py).
         video_embeds = self.video_embeddings_connector(video_embeds, attention_mask=attention_mask)
-        _watchdog_flush(video_embeds)
         audio_embeds = self.audio_embeddings_connector(audio_embeds, attention_mask=attention_mask)
-        _watchdog_flush(audio_embeds)
 
         return video_embeds, audio_embeds
 

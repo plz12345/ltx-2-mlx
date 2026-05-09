@@ -251,8 +251,8 @@ ltx-2-mlx info       Model info and memory estimate
 
 ### Environment variables
 
-- `LTX2_METAL_WATCHDOG_GUARD=1` — opt-in flush + GPU sync between Gemma layers / connector blocks. Defends against macOS' Impacting Interactivity watchdog (~10 s) when the system is under heavy GPU contention (Spotlight/Siri post-boot indexing). Default off — leaves full pipelining on capable hardware.
-- `LTX2_GEMMA_MAX_LENGTH=N` — cap padded Gemma sequence length (default 1024). Reducing to 512/256 speeds Gemma forward proportionally but **shifts left-padded RoPE positions** away from the LTX training distribution (quality risk). Use only if the watchdog guard alone isn't enough.
+- `LTX2_GEMMA_EVAL_EVERY=N` — override the auto-default for per-layer eval in Gemma forward (default: `1` on ≤48 GB Macs, `0` on bigger Macs). The auto-default keeps each Metal command buffer below the macOS GPU watchdog threshold without sacrificing throughput on capable hardware. Set explicitly only for debugging.
+- `LTX2_GEMMA_MAX_LENGTH=N` — cap padded Gemma sequence length (default 1024). Reducing to 512/256 speeds Gemma forward proportionally but **shifts left-padded RoPE positions** away from the LTX training distribution (quality risk). Last-resort knob.
 
 ## Frame Count Reference
 

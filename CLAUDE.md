@@ -850,35 +850,32 @@ End-to-end run on M2 Pro 32 GB, dev model + HDR LoRA fused, q8:
 
 ---
 
-## Metal Watchdog Guard (`LTX2_METAL_WATCHDOG_GUARD`)
+## Metal Watchdog Mitigation (auto, memory-gated)
 
-Optional opt-in flag to defend against macOS' `kIOGPUCommandBufferCallbackErrorImpactingInteractivity` watchdog (~10 s per Metal command buffer). When set to `1`, helpers in `ltx_core_mlx.utils.metal_watchdog.flush()` insert `mx.eval` + `mx.synchronize` between heavy ops:
+The macOS GPU watchdog (`kIOGPUCommandBufferCallbackErrorImpactingInteractivity`, ~10 s per Metal command buffer) trips when:
 
-- Per Gemma transformer layer (48 layers × ~200 ms each can otherwise cluster).
-- Per `Embeddings1DConnector` block (8 video + 8 audio at seq_len 1024).
-- Between feature-extractor stages (text projection → video connector → audio connector).
-- Between Gemma output and the connector forward in `_encode_text`.
+1. A single command buffer takes too long (one giant lazy-graph dispatch).
+2. Many small command buffers queue behind system processes (mds_stores, knowledgeconstructiond, Spotlight, Siri).
 
-**Default: off.** Forced sync limits GPU pipelining on capable hardware (M2/M3 Ultra, Mac Studio with abundant headroom). Enable only when you actually see the watchdog error:
+LTX-2 mitigates both automatically on `<=48 GB` Macs by inserting `mx.eval` at strategic points so each command buffer is small enough to fit one watchdog window but few enough that queue contention doesn't dominate:
 
-```bash
-LTX2_METAL_WATCHDOG_GUARD=1 ltx-2-mlx generate ...
-```
+- **Gemma forward**: per-layer eval (48 layers × ~100 ms each). Override via `LTX2_GEMMA_EVAL_EVERY=N` (default `1` on ≤48 GB, `0` on bigger Macs).
+- **TextEmbeddingProjection**: per-output-projection eval (splits the 188160→4096 video matmul from the 188160→2048 audio matmul). No-op on >48 GB.
+- **Embeddings1DConnector**: per-block eval (8 video + 8 audio blocks). No-op on >48 GB.
 
-Most often triggered post-boot when Spotlight, Siri, and Biome indexers are competing for GPU. Once those finish (~30–60 min), the guard is usually unnecessary.
+`>48 GB` Macs (Mac Studio, M-series Ultra) keep full lazy-graph pipelining for max throughput.
 
-### Companion: `LTX2_GEMMA_MAX_LENGTH`
+### `LTX2_GEMMA_MAX_LENGTH`
 
-Caps the padded Gemma sequence length (default `1024`). Reducing to `512` or `256` halves/quarters the Gemma forward time but **shifts left-padded RoPE positions away from the LTX training distribution** — quality risk. Use only when even the watchdog guard isn't enough headroom.
+Caps the padded Gemma sequence length (default `1024`). Reducing to `512` halves Gemma forward time but **shifts left-padded RoPE positions away from the LTX training distribution** — quality risk. Use only as a last resort on heavily contended systems.
 
 ```bash
-# Extreme-contention escape hatch
-LTX2_METAL_WATCHDOG_GUARD=1 LTX2_GEMMA_MAX_LENGTH=512 ltx-2-mlx hdr-ic-lora ...
+LTX2_GEMMA_MAX_LENGTH=512 ltx-2-mlx hdr-ic-lora ...
 ```
 
-### Key File
+### Pipeline-load ordering
 
-- `packages/ltx-core-mlx/src/ltx_core_mlx/utils/metal_watchdog.py` — single `flush(*arrays)` helper, env-var gated.
+The fix that actually unblocked production-quality generation was `1a30f74`: every pipeline's `load()` method previously called `_load_text_encoder()` to load Gemma → free → load DiT, but the wrapping `generate_*()` methods had ALREADY encoded the prompt and freed Gemma BEFORE calling `load()`. Loading Gemma twice (7.5 GB mmap each time) right before the 10 GB DiT thrashed the Metal heap and caused the watchdog crash. The text encoder lifecycle now lives entirely in `generate_*()` methods; `load()` no longer touches Gemma.
 
 ---
 

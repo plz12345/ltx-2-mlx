@@ -165,9 +165,6 @@ class GemmaLanguageModel(nn.Module):
             all_hidden_states.append(h)
             if eval_every and (i + 1) % eval_every == 0:
                 mx.eval(h)
-                from ltx_core_mlx.utils.metal_watchdog import flush as _watchdog_flush
-
-                _watchdog_flush()
 
         return all_hidden_states
 
