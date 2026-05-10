@@ -166,7 +166,70 @@ def decode_and_save_video(
     return output_path
 
 
+def combined_image_conditionings(
+    images,
+    *,
+    enc_h: int,
+    enc_w: int,
+    spatial_dims: tuple[int, int, int],
+    video_encoder,
+    fps: float = 24.0,
+):
+    """Build a list of conditioning items from a list of input images.
+
+    Mirrors upstream ``ltx_pipelines.utils.helpers.combined_image_conditionings``:
+
+    - First image with ``frame_idx == 0`` becomes a
+      :class:`VideoConditionByLatentIndex` (replaces latent[0]).
+    - Other images become :class:`VideoConditionByKeyframeIndex`
+      entries appended at their respective frame indices.
+
+    Args:
+        images: List of :class:`ImageConditioningInput`.
+        enc_h: Encoder spatial height (must be divisible by 32).
+        enc_w: Encoder spatial width.
+        spatial_dims: ``(F, H, W)`` latent shape of the target video.
+        video_encoder: VAE encoder instance (must expose ``encode``).
+        fps: Frame rate for keyframe positions.
+
+    Returns:
+        List of conditioning items ready to feed into
+        :func:`create_noised_state`.
+    """
+    from ltx_core_mlx.conditioning.types.keyframe_cond import VideoConditionByKeyframeIndex
+    from ltx_core_mlx.conditioning.types.latent_cond import VideoConditionByLatentIndex
+    from ltx_core_mlx.utils.image import prepare_image_for_encoding
+
+    conditionings: list = []
+    for img in images:
+        img_tensor = prepare_image_for_encoding(img.path, enc_h, enc_w)
+        img_tensor = img_tensor[:, :, None, :, :]  # add F=1 dim
+        ref_latent = video_encoder.encode(img_tensor)  # (1, 128, 1, H', W')
+        ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
+
+        if img.frame_idx == 0:
+            conditionings.append(
+                VideoConditionByLatentIndex(
+                    frame_indices=[0],
+                    clean_latent=ref_tokens,
+                    strength=img.strength,
+                )
+            )
+        else:
+            conditionings.append(
+                VideoConditionByKeyframeIndex(
+                    frame_idx=img.frame_idx,
+                    keyframe_latent=ref_tokens,
+                    spatial_dims=spatial_dims,
+                    fps=fps,
+                    strength=img.strength,
+                )
+            )
+    return conditionings
+
+
 __all__ = [
+    "combined_image_conditionings",
     "decode_and_save_video",
     "fuse_pending_loras",
     "load_dev_transformer",

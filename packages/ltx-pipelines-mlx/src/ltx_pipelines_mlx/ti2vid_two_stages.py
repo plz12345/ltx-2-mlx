@@ -19,15 +19,11 @@ from ltx_core_mlx.components.guiders import (
     create_multimodal_guider_factory,
 )
 from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
-from ltx_core_mlx.conditioning.types.latent_cond import (
-    VideoConditionByLatentIndex,
-)
 from ltx_core_mlx.loader.fuse_loras import apply_loras
 from ltx_core_mlx.loader.primitives import LoraStateDictWithStrength, StateDict
 from ltx_core_mlx.loader.sd_ops import LTXV_LORA_COMFY_RENAMING_MAP
 from ltx_core_mlx.model.transformer.model import LTXModel, X0Model
 from ltx_core_mlx.model.upsampler import LatentUpsampler
-from ltx_core_mlx.utils.image import prepare_image_for_encoding
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_token_count, compute_video_positions
 from ltx_core_mlx.utils.weights import load_split_safetensors
@@ -287,6 +283,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         cfg_scale: float = DEFAULT_CFG_SCALE,
         stg_scale: float = 0.0,
         image: str | None = None,
+        images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
         audio_guider_params: MultiModalGuiderParams | None = None,
         enable_teacache: bool = False,
@@ -346,21 +343,25 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         video_positions_1 = compute_video_positions(F, H_half, W_half)
         audio_positions = compute_audio_positions(audio_T)
 
-        # I2V conditioning at half resolution
+        # I2V conditioning at half resolution. ``images`` is the upstream-iso
+        # multi-anchor list; ``image`` is the legacy single-image shorthand
+        # (frame_idx=0, strength=1.0).
+        from ltx_pipelines_mlx.utils._orchestration import combined_image_conditionings
+        from ltx_pipelines_mlx.utils.args import ImageConditioningInput
+
         enc_h_half = H_half * 32
         enc_w_half = W_half * 32
-        conditionings_1: list[VideoConditionByLatentIndex] = []
-        if image is not None:
-            img_tensor = prepare_image_for_encoding(image, enc_h_half, enc_w_half)
-            img_tensor = img_tensor[:, :, None, :, :]
-            ref_latent = self.vae_encoder.encode(img_tensor)
-            ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
-            conditionings_1.append(
-                VideoConditionByLatentIndex(
-                    frame_indices=[0],
-                    clean_latent=ref_tokens,
-                    strength=1.0,
-                )
+        resolved_images = list(images) if images else []
+        if image is not None and not resolved_images:
+            resolved_images = [ImageConditioningInput(path=image, frame_idx=0, strength=1.0)]
+        conditionings_1: list = []
+        if resolved_images:
+            conditionings_1 = combined_image_conditionings(
+                resolved_images,
+                enc_h=enc_h_half,
+                enc_w=enc_w_half,
+                spatial_dims=(F, H_half, W_half),
+                video_encoder=self.vae_encoder,
             )
 
         # Stage 1: scalar-blend-then-cond for video matches legacy create_initial_state
@@ -465,21 +466,17 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         H_full = H_half * 2
         W_full = W_half * 2
 
-        # I2V conditioning at full resolution for Stage 2
-        conditionings_2: list[VideoConditionByLatentIndex] = []
-        if image is not None:
+        # I2V conditioning at full resolution for Stage 2 (re-encode at upscaled dims)
+        conditionings_2: list = []
+        if resolved_images:
             enc_h_full = H_full * 32
             enc_w_full = W_full * 32
-            img_tensor = prepare_image_for_encoding(image, enc_h_full, enc_w_full)
-            img_tensor = img_tensor[:, :, None, :, :]
-            ref_latent = self.vae_encoder.encode(img_tensor)
-            ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
-            conditionings_2.append(
-                VideoConditionByLatentIndex(
-                    frame_indices=[0],
-                    clean_latent=ref_tokens,
-                    strength=1.0,
-                )
+            conditionings_2 = combined_image_conditionings(
+                resolved_images,
+                enc_h=enc_h_full,
+                enc_w=enc_w_full,
+                spatial_dims=(F, H_full, W_full),
+                video_encoder=self.vae_encoder,
             )
 
         # Free VAE encoder + upsampler before Stage 2 denoising
@@ -558,33 +555,42 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         width: int = 704,
         num_frames: int = 97,
         seed: int = 42,
-        stage1_steps: int = 30,
+        stage1_steps: int | None = None,
         stage2_steps: int | None = None,
         cfg_scale: float = DEFAULT_CFG_SCALE,
         stg_scale: float = 0.0,
         image: str | None = None,
+        images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
         audio_guider_params: MultiModalGuiderParams | None = None,
         enable_teacache: bool = False,
         teacache_thresh: float | None = None,
     ) -> str:
-        """Generate two-stage video+audio and save to file."""
-        video_latent, audio_latent = self.generate_two_stage(
+        """Generate two-stage video+audio and save to file.
+
+        ``stage1_steps`` defaults to ``None`` so subclasses can apply
+        their own default (Euler: 30, HQ res_2s: 15) without being
+        overridden by this parent method's signature.
+        """
+        gen_kwargs: dict = dict(
             prompt=prompt,
             height=height,
             width=width,
             num_frames=num_frames,
             seed=seed,
-            stage1_steps=stage1_steps,
             stage2_steps=stage2_steps,
             cfg_scale=cfg_scale,
             stg_scale=stg_scale,
             image=image,
+            images=images,
             video_guider_params=video_guider_params,
             audio_guider_params=audio_guider_params,
             enable_teacache=enable_teacache,
             teacache_thresh=teacache_thresh,
         )
+        if stage1_steps is not None:
+            gen_kwargs["stage1_steps"] = stage1_steps
+        video_latent, audio_latent = self.generate_two_stage(**gen_kwargs)
 
         # Free transformer + encoder to make room for decoders
         if self.low_memory:

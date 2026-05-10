@@ -40,6 +40,32 @@ def _add_base_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress progress output")
 
 
+def _legacy_single_image(images, *, mode_label: str) -> str | None:
+    """Reduce a list of ImageConditioningInput to a single legacy path.
+
+    one-stage and distilled pipelines accept only the legacy ``image=path``
+    (frame_idx=0, strength=1.0). Multi-anchor I2V is a two-stage / HQ
+    feature. Errors out clearly if the user passed >1 anchor or a non-
+    trivial frame_idx/strength on these modes.
+    """
+    if not images:
+        return None
+    if len(images) > 1:
+        raise SystemExit(
+            f"{mode_label}: multi-image I2V (>1 --image) requires --two-stage "
+            "or --two-stages-hq. The single-stage / distilled paths only "
+            "support a single legacy anchor."
+        )
+    img = images[0]
+    if img.frame_idx != 0 or img.strength != 1.0:
+        raise SystemExit(
+            f"{mode_label}: --image FRAME_IDX/STRENGTH overrides require "
+            "--two-stage or --two-stages-hq. Got "
+            f"frame_idx={img.frame_idx}, strength={img.strength}."
+        )
+    return img.path
+
+
 def _build_tile_count_config(args: argparse.Namespace):
     """Return a TileCountConfig from --tile-frames / --tile-spatial / --tile-overlap.
 
@@ -138,7 +164,25 @@ examples:
     # --- generate (T2V / I2V / two-stage / HQ) ---
     gen = sub.add_parser("generate", help="Generate video from text (T2V) or image (I2V)")
     _add_generation_args(gen)
-    gen.add_argument("--image", "-i", default=None, help="Reference image for I2V (optional)")
+    from ltx_pipelines_mlx.utils.args import ImageAction as _ImageAction
+
+    gen.add_argument(
+        "--image",
+        "-i",
+        action=_ImageAction,
+        nargs="+",
+        dest="images",
+        default=None,
+        metavar="ARG",
+        help=(
+            "Reference image for I2V. Form: PATH [FRAME_IDX STRENGTH [CRF]]. "
+            "PATH alone defaults to FRAME_IDX=0 STRENGTH=1.0 (legacy single-image I2V). "
+            "Repeatable to anchor multiple frames (e.g. --image foo.jpg 0 1.0 "
+            "--image foo.jpg 96 1.0 to anchor both ends and preserve identity). "
+            "FRAME_IDX is the target latent frame index; 0 replaces, others guide via "
+            "VideoConditionByKeyframeIndex. Mirrors upstream LTX_2_3 --image."
+        ),
+    )
     gen.add_argument("--steps", type=int, default=None, help="Denoising steps for one-stage (default: 8)")
     gen.add_argument(
         "--two-stage",
@@ -464,6 +508,12 @@ def _cmd_generate(args: argparse.Namespace) -> None:
         )
         if lora_paths:
             pipe._pending_loras = lora_paths
+        # one-stage accepts only a single legacy `image=path` (frame_idx=0,
+        # strength=1.0). Multi-anchor is unsupported here — would require
+        # the same combined_image_conditionings refactor as the two-stage
+        # paths. For now, error out if the user passed >1 anchor or a
+        # non-trivial strength/frame_idx.
+        legacy_image = _legacy_single_image(args.images, mode_label="--one-stage")
         kwargs: dict = dict(
             prompt=prompt,
             output_path=args.output,
@@ -471,7 +521,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             width=args.width,
             num_frames=args.frames,
             seed=args.seed,
-            image=args.image,
+            image=legacy_image,
         )
         # The dev one-stage pipeline uses `num_steps` (single sampler), not stage1/stage2.
         if args.stage1_steps is not None:
@@ -500,6 +550,8 @@ def _cmd_generate(args: argparse.Namespace) -> None:
         )
         if lora_paths:
             pipe._pending_loras = lora_paths
+        # distilled accepts only a single legacy `image=path` for now.
+        legacy_image = _legacy_single_image(args.images, mode_label="--distilled")
         kwargs: dict = dict(
             prompt=prompt,
             output_path=args.output,
@@ -507,7 +559,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             width=args.width,
             num_frames=args.frames,
             seed=args.seed,
-            image=args.image,
+            image=legacy_image,
         )
         if args.stage1_steps is not None:
             kwargs["stage1_steps"] = args.stage1_steps
@@ -541,7 +593,9 @@ def _cmd_generate(args: argparse.Namespace) -> None:
         )
         if lora_paths:
             pipe._pending_loras = lora_paths
-        # Only pass non-None overrides; pipeline defaults take over otherwise
+        # two-stage / HQ accept the upstream-iso multi-image conditioning list.
+        # Pass the list through; the legacy single-image path is handled inside
+        # the pipeline (image=None when images is set).
         kwargs: dict = dict(
             prompt=prompt,
             output_path=args.output,
@@ -549,7 +603,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             width=args.width,
             num_frames=args.frames,
             seed=args.seed,
-            image=args.image,
+            images=args.images,
         )
         if args.stage1_steps is not None:
             kwargs["stage1_steps"] = args.stage1_steps

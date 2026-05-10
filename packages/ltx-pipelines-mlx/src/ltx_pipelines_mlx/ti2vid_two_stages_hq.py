@@ -17,11 +17,7 @@ from ltx_core_mlx.components.guiders import (
     create_multimodal_guider_factory,
 )
 from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
-from ltx_core_mlx.conditioning.types.latent_cond import (
-    VideoConditionByLatentIndex,
-)
 from ltx_core_mlx.model.transformer.model import X0Model
-from ltx_core_mlx.utils.image import prepare_image_for_encoding
 from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.positions import compute_audio_positions, compute_audio_token_count, compute_video_positions
 from ltx_pipelines_mlx.scheduler import STAGE_2_SIGMAS, ltx2_schedule
@@ -97,6 +93,7 @@ class TI2VidTwoStagesHQPipeline(TI2VidTwoStagesPipeline):
         cfg_scale: float = DEFAULT_CFG_SCALE,
         stg_scale: float = 0.0,
         image: str | None = None,
+        images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
         audio_guider_params: MultiModalGuiderParams | None = None,
         enable_teacache: bool = False,
@@ -135,21 +132,25 @@ class TI2VidTwoStagesHQPipeline(TI2VidTwoStagesPipeline):
         video_positions_1 = compute_video_positions(F, H_half, W_half)
         audio_positions = compute_audio_positions(audio_T)
 
-        # I2V conditioning at half resolution
+        # I2V conditioning at half resolution. ``images`` is the upstream-iso
+        # multi-anchor list; ``image`` is the legacy single-image shorthand
+        # (frame_idx=0, strength=1.0).
+        from ltx_pipelines_mlx.utils._orchestration import combined_image_conditionings
+        from ltx_pipelines_mlx.utils.args import ImageConditioningInput
+
         enc_h_half = H_half * 32
         enc_w_half = W_half * 32
-        conditionings_1: list[VideoConditionByLatentIndex] = []
-        if image is not None:
-            img_tensor = prepare_image_for_encoding(image, enc_h_half, enc_w_half)
-            img_tensor = img_tensor[:, :, None, :, :]
-            ref_latent = self.vae_encoder.encode(img_tensor)
-            ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
-            conditionings_1.append(
-                VideoConditionByLatentIndex(
-                    frame_indices=[0],
-                    clean_latent=ref_tokens,
-                    strength=1.0,
-                )
+        resolved_images = list(images) if images else []
+        if image is not None and not resolved_images:
+            resolved_images = [ImageConditioningInput(path=image, frame_idx=0, strength=1.0)]
+        conditionings_1: list = []
+        if resolved_images:
+            conditionings_1 = combined_image_conditionings(
+                resolved_images,
+                enc_h=enc_h_half,
+                enc_w=enc_w_half,
+                spatial_dims=(F, H_half, W_half),
+                video_encoder=self.vae_encoder,
             )
 
         # Stage 1 video/audio: legacy_scalar_blend=True for bit-exact match
@@ -240,21 +241,17 @@ class TI2VidTwoStagesHQPipeline(TI2VidTwoStagesPipeline):
         H_full = H_half * 2
         W_full = W_half * 2
 
-        # I2V conditioning at full resolution for Stage 2
-        conditionings_2: list[VideoConditionByLatentIndex] = []
-        if image is not None:
+        # I2V conditioning at full resolution for Stage 2 (re-encode at upscaled dims)
+        conditionings_2: list = []
+        if resolved_images:
             enc_h_full = H_full * 32
             enc_w_full = W_full * 32
-            img_tensor = prepare_image_for_encoding(image, enc_h_full, enc_w_full)
-            img_tensor = img_tensor[:, :, None, :, :]
-            ref_latent = self.vae_encoder.encode(img_tensor)
-            ref_tokens = ref_latent.transpose(0, 2, 3, 4, 1).reshape(1, -1, 128)
-            conditionings_2.append(
-                VideoConditionByLatentIndex(
-                    frame_indices=[0],
-                    clean_latent=ref_tokens,
-                    strength=1.0,
-                )
+            conditionings_2 = combined_image_conditionings(
+                resolved_images,
+                enc_h=enc_h_full,
+                enc_w=enc_w_full,
+                spatial_dims=(F, H_full, W_full),
+                video_encoder=self.vae_encoder,
             )
 
         if self.low_memory:
