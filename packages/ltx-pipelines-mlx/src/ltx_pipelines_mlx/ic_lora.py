@@ -218,32 +218,40 @@ class ICLoraPipeline(BasePipeline):
 
     def _create_conditionings(
         self,
-        images: list[tuple[str, int, float]] | None,
+        images,
         video_conditioning: list[tuple[str, float]],
         height: int,
         width: int,
         num_frames: int,
+        video_encoder=None,
         conditioning_attention_strength: float = 1.0,
         conditioning_attention_mask: mx.array | None = None,
     ) -> list[object]:
         """Create conditioning items for video generation.
 
         Builds image conditionings (I2V) and IC-LoRA reference video conditionings.
-        Matches the reference implementation's _create_conditionings().
+        Mirrors upstream ``ltx_pipelines.ic_lora.ICLoraPipeline._create_conditionings``.
 
         Args:
-            images: Optional list of (image_path, frame_index, strength) for I2V.
+            images: Optional list of :class:`ImageConditioningInput` (upstream-iso
+                multi-anchor) for I2V. Legacy ``list[tuple[str, int, float]]``
+                tuples are accepted and normalized.
             video_conditioning: List of (video_path, strength) for IC-LoRA reference.
             height: Stage output height (pixels).
             width: Stage output width (pixels).
             num_frames: Number of pixel frames.
+            video_encoder: VAE encoder to use for image encoding (defaults to
+                ``self.vae_encoder``). Upstream takes this as explicit arg so
+                callers can pass an offloaded/streamed instance.
             conditioning_attention_strength: Scalar attention weight in [0, 1].
             conditioning_attention_mask: Optional pixel-space mask (1, 1, F, H, W).
 
         Returns:
             List of conditioning items. IC-LoRA conditionings are appended last.
         """
-        assert self.vae_encoder is not None
+        if video_encoder is None:
+            video_encoder = self.vae_encoder
+        assert video_encoder is not None
 
         conditionings: list[object] = []
 
@@ -258,8 +266,6 @@ class ICLoraPipeline(BasePipeline):
                 img if isinstance(img, ImageConditioningInput) else ImageConditioningInput(*img) for img in images
             ]
             # Stage spatial latent dims (F, H, W) for keyframe positions
-            from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
-
             F_lat, H_lat, W_lat = compute_video_latent_shape(num_frames, height, width)
             conditionings.extend(
                 combined_image_conditionings(
@@ -267,7 +273,7 @@ class ICLoraPipeline(BasePipeline):
                     enc_h=height,
                     enc_w=width,
                     spatial_dims=(F_lat, H_lat, W_lat),
-                    video_encoder=self.vae_encoder,
+                    video_encoder=video_encoder,
                 )
             )
 
@@ -498,7 +504,6 @@ class ICLoraPipeline(BasePipeline):
             normalized = [
                 img if isinstance(img, ImageConditioningInput) else ImageConditioningInput(*img) for img in images
             ]
-            from ltx_core_mlx.components.patchifiers import compute_video_latent_shape
 
             F_full, H_full_lat, W_full_lat = compute_video_latent_shape(num_frames, enc_h_full, enc_w_full)
             conditionings_2.extend(
@@ -629,6 +634,44 @@ class ICLoraPipeline(BasePipeline):
         self._load_decoders()
 
         return self._decode_and_save_video(video_latent, audio_latent, output_path)
+
+    # Upstream parity: ``pipe(prompt=..., ...)`` style invocation.
+    __call__ = generate
+
+
+def _load_mask_video(
+    mask_path: str,
+    height: int,
+    width: int,
+    num_frames: int,
+) -> mx.array:
+    """Load a mask video file as a pixel-space attention mask tensor.
+
+    Mirrors upstream ``ltx_pipelines.ic_lora._load_mask_video``:
+
+    1. Decode the first ``num_frames`` frames at ``(height, width)``.
+    2. Channel-average to grayscale.
+    3. Remap from ``[-1, 1]`` (video loader range) back to ``[0, 1]``.
+    4. Clip to ``[0, 1]``.
+
+    Args:
+        mask_path: Path to mask video file (any ffmpeg-readable format).
+        height: Target height in pixels.
+        width: Target width in pixels.
+        num_frames: Number of frames to load.
+
+    Returns:
+        ``mx.array`` of shape ``(1, 1, F, H, W)``, bfloat16, values in ``[0, 1]``.
+    """
+    # load_video_frames_normalized returns shape (1, 3, F, H, W) in [-1, 1].
+    frames = load_video_frames_normalized(mask_path, height, width, num_frames)
+    # Channel-average (RGB → grayscale): (1, 3, F, H, W) → (1, 1, F, H, W).
+    mask = frames.mean(axis=1, keepdims=True)
+    # [-1, 1] → [0, 1].
+    mask = (mask + 1.0) / 2.0
+    # Clip safety.
+    mask = mx.clip(mask, 0.0, 1.0)
+    return mask.astype(mx.bfloat16)
 
 
 def _resolve_lora_path(path: str) -> str:
