@@ -281,7 +281,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         stage1_steps: int = 30,
         stage2_steps: int | None = None,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
         image: str | None = None,
         images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
@@ -301,7 +301,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
             stage1_steps: Denoising steps for stage 1 (default: 20).
             stage2_steps: Denoising steps for stage 2.
             cfg_scale: CFG guidance scale for stage 1 (default: 3.0).
-            stg_scale: STG guidance scale for stage 1 (default: 0.0).
+            stg_scale: STG guidance scale for stage 1 (default: 1.0, upstream LTX_2_3_PARAMS).
             image: Optional reference image for I2V conditioning.
             video_guider_params: Optional full guider params for video.
             audio_guider_params: Optional full guider params for audio.
@@ -561,7 +561,7 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         stage1_steps: int | None = None,
         stage2_steps: int | None = None,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
         image: str | None = None,
         images=None,
         video_guider_params: MultiModalGuiderParams | None = None,

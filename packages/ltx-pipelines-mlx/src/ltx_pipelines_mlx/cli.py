@@ -209,7 +209,7 @@ examples:
     gen.add_argument("--stage1-steps", type=int, default=None, help="Stage 1 steps (default: 30 standard, 15 HQ)")
     gen.add_argument("--stage2-steps", type=int, default=None, help="Stage 2 steps (default: 3)")
     gen.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
-    gen.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 standard, 0.0 HQ)")
+    gen.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 standard, 0.0 HQ — upstream LTX_2_3_PARAMS)")
     gen.add_argument(
         "--dev-transformer",
         default="transformer-dev.safetensors",
@@ -262,7 +262,7 @@ examples:
     a2v.add_argument("--stage1-steps", type=int, default=None, help="Stage 1 steps (default: 30)")
     a2v.add_argument("--stage2-steps", type=int, default=None, help="Stage 2 steps (default: 3)")
     a2v.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
-    a2v.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 0.0)")
+    a2v.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 — upstream LTX_2_3_PARAMS)")
     a2v.add_argument(
         "--image",
         "-i",
@@ -286,7 +286,7 @@ examples:
     ret.add_argument("--end", type=int, required=True, help="End latent frame index (exclusive)")
     ret.add_argument("--steps", type=int, default=None, help="Denoising steps (default: 30)")
     ret.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
-    ret.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 0.0)")
+    ret.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 — upstream LTX_2_3_PARAMS)")
     ret.add_argument("--no-regen-audio", action="store_true", help="Preserve original audio (don't regenerate)")
 
     # --- extend ---
@@ -297,7 +297,7 @@ examples:
     ext.add_argument("--direction", choices=["before", "after"], default="after", help="Direction (default: after)")
     ext.add_argument("--steps", type=int, default=None, help="Denoising steps (default: 30)")
     ext.add_argument("--cfg-scale", type=float, default=None, help="CFG guidance scale (default: 3.0)")
-    ext.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 0.0)")
+    ext.add_argument("--stg-scale", type=float, default=None, help="STG guidance scale (default: 1.0 — upstream LTX_2_3_PARAMS)")
 
     # --- keyframe ---
     kf = sub.add_parser("keyframe", help="Interpolate between keyframe images")

@@ -63,7 +63,7 @@ class A2VidPipelineTwoStage(TI2VidTwoStagesPipeline):
         neg_audio_embeds: mx.array,
         sigmas: list[float],
         cfg_scale: float = 3.0,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
     ) -> object:
         """Run Stage 1 denoising with Euler + CFG. Override for HQ (res2s)."""
         # Video: full guidance (ref LTX_2_3_PARAMS)
@@ -104,7 +104,7 @@ class A2VidPipelineTwoStage(TI2VidTwoStagesPipeline):
         stage1_steps: int = 30,
         stage2_steps: int | None = None,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
         image: str | None = None,
         images=None,
         audio_start_time: float = 0.0,
@@ -127,7 +127,7 @@ class A2VidPipelineTwoStage(TI2VidTwoStagesPipeline):
             stage1_steps: Stage 1 denoising steps (default: 20).
             stage2_steps: Stage 2 denoising steps.
             cfg_scale: CFG guidance scale for stage 1 (default: 3.0).
-            stg_scale: STG guidance scale for stage 1 (default: 0.0).
+            stg_scale: STG guidance scale for stage 1 (default: 1.0, upstream LTX_2_3_PARAMS).
             image: Optional reference image for I2V conditioning (first frame).
             audio_start_time: Start time in seconds for audio.
             audio_max_duration: Max audio duration.

@@ -50,7 +50,7 @@ from ltx_pipelines_mlx.utils.samplers import guided_denoise_loop
 
 # Reference defaults (LTX_2_3_PARAMS)
 DEFAULT_CFG_SCALE = 3.0
-DEFAULT_STG_SCALE = 0.0  # 32GB safe; ref uses 1.0 but OOM on long videos
+DEFAULT_STG_SCALE = 1.0  # upstream LTX_2_3_PARAMS default
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,7 @@ class RetakePipeline(BasePipeline):
             seed: Random seed.
             num_steps: Number of denoising steps (default: 30).
             cfg_scale: CFG guidance scale (default: 3.0).
-            stg_scale: STG guidance scale (default: 0.0).
+            stg_scale: STG guidance scale (default: 1.0, upstream LTX_2_3_PARAMS).
             regenerate_audio: If True, regenerate audio in the retake region.
                 If False, preserve original audio entirely.
 
@@ -218,7 +218,7 @@ class RetakePipeline(BasePipeline):
             seed: Random seed.
             num_steps: Number of denoising steps (default: 30).
             cfg_scale: CFG guidance scale (default: 3.0).
-            stg_scale: STG guidance scale (default: 0.0).
+            stg_scale: STG guidance scale (default: 1.0, upstream LTX_2_3_PARAMS).
 
         Returns:
             Tuple of (extended_video_latent, extended_audio_latent).
@@ -270,7 +270,7 @@ class RetakePipeline(BasePipeline):
             seed: Random seed.
             num_steps: Number of denoising steps (default: 30).
             cfg_scale: CFG guidance scale (default: 3.0).
-            stg_scale: STG guidance scale (default: 0.0).
+            stg_scale: STG guidance scale (default: 1.0, upstream LTX_2_3_PARAMS).
             regenerate_audio: If True, regenerate audio in the retake region.
 
         Returns:
@@ -407,7 +407,7 @@ class RetakePipeline(BasePipeline):
             seed: Random seed.
             num_steps: Number of denoising steps (default: 30).
             cfg_scale: CFG guidance scale (default: 3.0).
-            stg_scale: STG guidance scale (default: 0.0).
+            stg_scale: STG guidance scale (default: 1.0, upstream LTX_2_3_PARAMS).
 
         Returns:
             Tuple of (extended_video_latent, extended_audio_latent).

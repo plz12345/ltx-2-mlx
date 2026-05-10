@@ -109,7 +109,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
         seed: int = 42,
         num_steps: int = 30,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
         image: str | None = None,
         images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
@@ -126,7 +126,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
             seed: Random seed.
             num_steps: Denoising steps (default: 30).
             cfg_scale: CFG guidance scale (default: 3.0).
-            stg_scale: STG guidance scale (default: 0.0).
+            stg_scale: STG guidance scale (default: 1.0, upstream LTX_2_3_PARAMS).
             image: Optional reference image for I2V (legacy single-anchor).
             images: Optional list of :class:`ImageConditioningInput` for
                 multi-anchor I2V (matches upstream ``combined_image_conditionings``).
@@ -264,7 +264,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
         seed: int = 42,
         num_steps: int = 30,
         cfg_scale: float = DEFAULT_CFG_SCALE,
-        stg_scale: float = 0.0,
+        stg_scale: float = 1.0,
         image: str | None = None,
         images=None,
         video_guider_params: MultiModalGuiderParams | None = None,
