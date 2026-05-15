@@ -3,22 +3,19 @@
 All tests are pure arithmetic — no model weights, no GPU work, sub-second.
 """
 
-import pytest
-
 from ltx_core_mlx.model.video_vae.tiling import TemporalTilingConfig
 from ltx_core_mlx.model.video_vae.video_vae import _compute_decode_tiling
 
-
 # Latent shape (B, C, F_lat, H_lat, W_lat) used across tests.
-# 4×4 spatial keeps block-3 bytes small so we can control the budget precisely.
+# 4x4 spatial keeps block-3 bytes small so we can control the budget precisely.
 # block3_bytes_per_lat_frame = 512 * 4 * (4*4) * (4*4) * 4 = 2,097,152 (~2 MB)
-_SMALL_LATENT = (1, 128, 100, 4, 4)  # 100 latent frames → ~200 MB total, triggers at budget < 200 MB
+_SMALL_LATENT = (1, 128, 100, 4, 4)  # 100 latent frames -> ~200 MB total, triggers at budget < 200 MB
 _BYTES_PER_LAT_FRAME = 512 * 4 * (4 * 4) * (4 * 4) * 4  # 2 MB
 
 
 class TestNoTilingNeeded:
     def test_returns_none_when_video_fits(self):
-        # 2 latent frames × 2 MB = 4 MB << 1 GB budget
+        # 2 latent frames x 2 MB = 4 MB << 1 GB budget
         shape = (1, 128, 2, 4, 4)
         result = _compute_decode_tiling(shape, peak_budget_gb=1.0)
         assert result is None

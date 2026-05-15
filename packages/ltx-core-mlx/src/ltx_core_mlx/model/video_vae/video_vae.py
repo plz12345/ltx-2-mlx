@@ -56,6 +56,7 @@ from ltx_core_mlx.utils.memory import aggressive_cleanup
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
 def _compute_decode_tiling(
     latent_shape: tuple[int, ...],
     peak_budget_gb: float = 8.0,
@@ -69,7 +70,7 @@ def _compute_decode_tiling(
     _, _, F_lat, H_lat, W_lat = latent_shape
     budget_bytes = int(peak_budget_gb * 1024**3)
 
-    # Block-3 peak memory: 512 channels × 4 temporal frames × (4H spatial) × (4W spatial) × 4 bytes
+    # Block-3 peak memory: 512 channels x 4 temporal frames x (4H spatial) x (4W spatial) x 4 bytes
     block3_bytes_per_lat_frame = 512 * 4 * (H_lat * 4) * (W_lat * 4) * 4
 
     if block3_bytes_per_lat_frame * F_lat <= budget_bytes:
@@ -78,7 +79,7 @@ def _compute_decode_tiling(
     # How many latent frames fit within the budget?
     max_lat_frames = max(2, budget_bytes // block3_bytes_per_lat_frame)
 
-    # Convert latent frames → output pixel frames (8× temporal upsampling), with a 16-frame minimum
+    # Convert latent frames -> output pixel frames (8x temporal upsampling), with a 16-frame minimum
     tile_frames = max(16, max_lat_frames * 8)
 
     # Overlap ≈ 1 second of pixel frames at the given frame rate, rounded down to a multiple of 8,
@@ -296,8 +297,8 @@ class VideoDecoder(nn.Module):
         """
         if tiling_config is None:
             pixels = self.decode(latent)
-            mx.eval(pixels)      # materialize now — frees block-3 intermediate activations
-            aggressive_cleanup() # release GPU cache before caller begins streaming
+            mx.eval(pixels)  # materialize now — frees block-3 intermediate activations
+            aggressive_cleanup()  # release GPU cache before caller begins streaming
             yield pixels
             del pixels
             return
