@@ -392,7 +392,9 @@ class VideoDecoder(nn.Module):
                 yield_len = curr_temporal_slice.start - previous_temporal_slice.start
                 if yield_len > 0:
                     safe_weights = mx.maximum(previous_weights, 1e-8)
-                    yield (previous_chunk / safe_weights)[:, :, :yield_len, :, :]
+                    chunk = (previous_chunk / safe_weights)[:, :, :yield_len, :, :]
+                    mx.eval(chunk)
+                    yield chunk
 
             previous_chunk = buffer
             previous_weights = weights
@@ -401,7 +403,9 @@ class VideoDecoder(nn.Module):
         # Yield remaining chunk
         if previous_chunk is not None and previous_weights is not None:
             safe_weights = mx.maximum(previous_weights, 1e-8)
-            yield previous_chunk / safe_weights
+            chunk = previous_chunk / safe_weights
+            mx.eval(chunk)
+            yield chunk
 
     def decode_and_stream(
         self,
@@ -466,16 +470,13 @@ class VideoDecoder(nn.Module):
         for chunk in self.tiled_decode(latent, tiling):  # (B, 3, T, H, W)
             if pipe_broken:
                 break
-            # chunk is already materialized by tiled_decode — async_eval is a no-op
-            # but kept for compatibility if the yield path changes.
-            mx.async_eval(chunk)
             num_frames = chunk.shape[2]
             for i in range(num_frames):
                 frame = chunk[:, :, i, :, :]
                 frame = mx.clip(frame, -1.0, 1.0)
                 frame = ((frame + 1.0) * 127.5).astype(mx.uint8)
                 frame_hwc = frame[0].transpose(1, 2, 0)  # (H, W, 3)
-                mx.eval(frame_hwc)  # sync before write — async_eval can race memoryview
+                mx.eval(frame_hwc)  # required: memoryview races GPU writes without this sync
                 try:
                     proc.stdin.write(bytes(memoryview(frame_hwc)))
                 except BrokenPipeError:
