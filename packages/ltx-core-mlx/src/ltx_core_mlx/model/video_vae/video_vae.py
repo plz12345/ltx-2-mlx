@@ -434,6 +434,13 @@ class VideoDecoder(nn.Module):
         """
         ffmpeg = find_ffmpeg()
         tiling = _compute_decode_tiling(latent.shape, frame_rate=frame_rate)
+        if tiling is not None and tiling.temporal_config is not None:
+            tc = tiling.temporal_config
+            logger.info(
+                "vae-decode tiled: tile_frames=%d overlap=%d",
+                tc.tile_size_in_frames,
+                tc.tile_overlap_in_frames,
+            )
 
         # Estimate output dimensions from latent
         _, _, _F_lat, H_lat, W_lat = latent.shape
