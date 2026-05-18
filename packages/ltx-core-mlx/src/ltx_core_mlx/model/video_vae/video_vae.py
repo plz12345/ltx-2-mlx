@@ -451,31 +451,41 @@ class VideoDecoder(nn.Module):
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
         assert proc.stdin is not None
 
-        try:
-            for chunk in self.tiled_decode(latent, tiling):  # (B, 3, T, H, W)
-                # chunk is already materialized by tiled_decode — async_eval is a no-op
-                # but kept for compatibility if the yield path changes.
-                mx.async_eval(chunk)
-                num_frames = chunk.shape[2]
-                for i in range(num_frames):
-                    frame = chunk[:, :, i, :, :]
-                    frame = mx.clip(frame, -1.0, 1.0)
-                    frame = ((frame + 1.0) * 127.5).astype(mx.uint8)
-                    frame_hwc = frame[0].transpose(1, 2, 0)  # (H, W, 3)
-                    mx.eval(frame_hwc)  # sync before write — async_eval can race memoryview
+        frames_written = 0
+        pipe_broken = False
+        for chunk in self.tiled_decode(latent, tiling):  # (B, 3, T, H, W)
+            if pipe_broken:
+                break
+            # chunk is already materialized by tiled_decode — async_eval is a no-op
+            # but kept for compatibility if the yield path changes.
+            mx.async_eval(chunk)
+            num_frames = chunk.shape[2]
+            for i in range(num_frames):
+                frame = chunk[:, :, i, :, :]
+                frame = mx.clip(frame, -1.0, 1.0)
+                frame = ((frame + 1.0) * 127.5).astype(mx.uint8)
+                frame_hwc = frame[0].transpose(1, 2, 0)  # (H, W, 3)
+                mx.eval(frame_hwc)  # sync before write — async_eval can race memoryview
+                try:
                     proc.stdin.write(bytes(memoryview(frame_hwc)))
-                    del frame, frame_hwc
-                    if i % 8 == 0:
-                        aggressive_cleanup()
-                del chunk
-                aggressive_cleanup()
-        except BrokenPipeError:
-            pass  # ffmpeg may close early with -shortest; output is still valid
-        finally:
-            if proc.stdin and not proc.stdin.closed:
-                proc.stdin.close()
-            proc.wait()
+                except BrokenPipeError:
+                    logger.warning(
+                        "ffmpeg pipe closed after %d frames (expected %d); output may be truncated",
+                        frames_written,
+                        latent.shape[2] * 8 - 7,
+                    )
+                    pipe_broken = True
+                    break
+                frames_written += 1
+                del frame, frame_hwc
+                if i % 8 == 0:
+                    aggressive_cleanup()
+            del chunk
             aggressive_cleanup()
+        if proc.stdin and not proc.stdin.closed:
+            proc.stdin.close()
+        proc.wait()
+        aggressive_cleanup()
 
 
 class VideoEncoder(nn.Module):
