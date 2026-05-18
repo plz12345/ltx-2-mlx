@@ -25,6 +25,7 @@ via :func:`~ltx_2_mlx.model.video_vae.ops.remap_encoder_weight_keys`.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from collections.abc import Iterator
 from typing import Any
@@ -59,7 +60,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def _compute_decode_tiling(
     latent_shape: tuple[int, ...],
-    peak_budget_gb: float = 8.0,
     frame_rate: float = 24.0,
 ) -> TilingConfig | None:
     """Return a TilingConfig that keeps peak VAE decode memory under budget, or None.
@@ -67,7 +67,11 @@ def _compute_decode_tiling(
     Peak memory occurs at the block-3 intermediate tensor (the second
     DepthToSpaceUpsample), shape (1, 512, F_lat*4, H_lat*4, W_lat*4) in bf16.
     Returns None when the full video fits within budget — no tiling, no overhead.
+
+    Budget is controlled by the ``LTX2_VAE_DECODE_BUDGET_GB`` environment variable
+    (default 8.0 GB). Raise it on Mac Studio 64/128 GB to reduce or eliminate tiling.
     """
+    peak_budget_gb = float(os.environ.get("LTX2_VAE_DECODE_BUDGET_GB", "8.0"))
     _, _, F_lat, H_lat, W_lat = latent_shape
     budget_bytes = int(peak_budget_gb * 1024**3)
 
