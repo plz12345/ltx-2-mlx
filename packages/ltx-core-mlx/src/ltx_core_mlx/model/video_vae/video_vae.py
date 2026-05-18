@@ -64,14 +64,15 @@ def _compute_decode_tiling(
 ) -> TilingConfig | None:
     """Return a TilingConfig that keeps peak VAE decode memory under budget, or None.
 
-    Peak memory occurs at the block-3 intermediate tensor (the second DepthToSpaceUpsample), which has shape (1, 512, F_lat*4, H_lat*4, W_lat*4) at float32. We size tiles so thi tensor stays within budget. Returns None when the full video already fits — no tiling,
-    no overhead.
+    Peak memory occurs at the block-3 intermediate tensor (the second
+    DepthToSpaceUpsample), shape (1, 512, F_lat*4, H_lat*4, W_lat*4) in bf16.
+    Returns None when the full video fits within budget — no tiling, no overhead.
     """
     _, _, F_lat, H_lat, W_lat = latent_shape
     budget_bytes = int(peak_budget_gb * 1024**3)
 
-    # Block-3 peak memory: 512 channels x 4 temporal frames x (4H spatial) x (4W spatial) x 4 bytes
-    block3_bytes_per_lat_frame = 512 * 4 * (H_lat * 4) * (W_lat * 4) * 4
+    # Block-3 peak tensor: 512ch x 4 temporal x (4H spatial) x (4W spatial) x 2 bytes (bf16).
+    block3_bytes_per_lat_frame = 512 * 4 * (H_lat * 4) * (W_lat * 4) * 2
 
     if block3_bytes_per_lat_frame * F_lat <= budget_bytes:
         return None  # Full video fits in budget — no tiling needed
@@ -409,9 +410,14 @@ class VideoDecoder(nn.Module):
         """Decode latent and stream frames to ffmpeg.
 
         Automatically applies temporal tiling when the full-volume decode would
-        exceed 8 GB peak activation memory (block 3 intermediate). At typical
-        resolutions (≤720p, ≤20s) this falls through to a single-pass decode
-        with no tiling overhead.
+        exceed the memory budget (``LTX2_VAE_DECODE_BUDGET_GB``, default 8 GB).
+        Budget is measured against the block-3 bf16 activation
+        (512 x 4 x 4H_lat x 4W_lat x 2 bytes per latent frame). At 8 GB:
+
+        - 720p  (H_lat=22, W_lat=40): ~55 MB/frame → tiling at ~47s @25fps
+        - 1080p (H_lat=33, W_lat=60): ~124 MB/frame → tiling at ~22s @25fps
+
+        Falls through to a single-pass decode with no overhead for shorter clips.
 
         Args:
             latent: (B, C, F, H, W) latent.
