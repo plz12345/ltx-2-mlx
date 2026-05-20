@@ -333,7 +333,9 @@ class VideoDecoder(nn.Module):
             curr_temporal_slice = temporal_group_tiles[0].out_coords[2]
             temporal_len = curr_temporal_slice.stop - curr_temporal_slice.start
 
-            # Initialize accumulation buffers for this temporal group
+            # Initialize accumulation buffers for this temporal group.
+            # TODO: switch to bfloat16 (matching decoder output dtype) to halve
+            # buffer memory — deferred to isolate decode RAM auditing to its own PR.
             buffer = mx.zeros((latent.shape[0], 3, temporal_len, out_H, out_W))
             weights = mx.zeros_like(buffer)
 
@@ -430,6 +432,10 @@ class VideoDecoder(nn.Module):
 
         - 720p  (H_lat=22, W_lat=40): ~55 MB/frame → tiling at ~47s @25fps
         - 1080p (H_lat=33, W_lat=60): ~124 MB/frame → tiling at ~22s @25fps
+
+        Note: the budget covers the block-3 activation of a single tile decode.
+        The tiling accumulation buffer (fp32, B x 3 x T x H x W) and its weights
+        twin live on top of this; at 1080p / >100 frames they add several GB.
 
         Falls through to a single-pass decode with no overhead for shorter clips.
 
