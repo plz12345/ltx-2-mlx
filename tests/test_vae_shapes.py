@@ -207,6 +207,47 @@ class TestVideoDecoder:
         assert tiled_out.shape == baseline.shape
         assert mx.allclose(baseline, tiled_out, atol=1e-6).item()
 
+    def test_tiled_decode_multi_tile_matches_decode(self):
+        """tiled_decode with >=2 tiles exercises the previous_chunk blend path.
+
+        F_lat=5 → 33 pixel frames. With tile_size_in_frames=16 (2 latent frames)
+        and tile_overlap_in_frames=8 (1 latent frame), prepare_tiles_for_decoding
+        returns multiple tiles and the previous_chunk accumulation + blend math is
+        exercised.
+
+        Note: tiled output is NOT numerically close to decoder.decode() because the
+        VAE uses causal temporal convolutions — each tile starts with zero-padded
+        context instead of full causal history from the prior tile. Pixel-space
+        blending smooths the transition visually but does not reproduce the
+        non-tiled output. This test verifies shape, multi-tile execution, and
+        finite values; not numerical identity with the non-tiled path.
+        """
+        mx.random.seed(0)
+        decoder = VideoDecoder()
+        mx.eval(decoder.parameters())
+
+        latent = mx.random.normal((1, 128, 5, 3, 3))
+        mx.eval(latent)
+
+        cfg = TilingConfig(
+            temporal_config=TemporalTilingConfig(
+                tile_size_in_frames=16,
+                tile_overlap_in_frames=8,
+            )
+        )
+        chunks = list(decoder.tiled_decode(latent, cfg))
+        tiled_out = mx.concatenate(chunks, axis=2) if len(chunks) > 1 else chunks[0]
+        mx.eval(tiled_out)
+
+        # Multi-tile path was exercised
+        assert len(chunks) > 1
+        # Output shape matches non-tiled decode
+        baseline = decoder.decode(latent)
+        mx.eval(baseline)
+        assert tiled_out.shape == baseline.shape
+        # Blend produced finite values (no NaN/inf from weight accumulation)
+        assert mx.isfinite(tiled_out).all().item()
+
 
 # ---------------------------------------------------------------------------
 # Encoder tests
