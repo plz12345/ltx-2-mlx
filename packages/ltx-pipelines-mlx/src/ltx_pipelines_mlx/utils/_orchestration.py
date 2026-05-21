@@ -41,8 +41,7 @@ def resolve_lora_path(path: str) -> str:
 
     Supports local ``.safetensors`` files and HuggingFace repo IDs
     (e.g. ``"some-user/my-lora"``).  When a repo is downloaded its
-    ``.safetensors`` files are collected; if there is more than one the
-    first is used with a warning.
+    ``.safetensors`` files are collected; exactly one must be present.
     """
     import logging
 
@@ -57,7 +56,11 @@ def resolve_lora_path(path: str) -> str:
     if not safetensors_files:
         raise FileNotFoundError(f"No .safetensors files found in {repo_dir}")
     if len(safetensors_files) > 1:
-        _logger.warning("Multiple .safetensors files found, using first: %s", safetensors_files[0].name)
+        names = sorted(f.name for f in safetensors_files)
+        raise ValueError(
+            f"Ambiguous: {len(safetensors_files)} .safetensors files in repo '{path}' "
+            f"({', '.join(names)}); pass the full local path to the specific file instead."
+        )
     return str(safetensors_files[0])
 
 

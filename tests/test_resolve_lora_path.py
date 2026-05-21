@@ -3,7 +3,7 @@
 Covers all four branches:
 - local-exists: file on disk → returned as-is
 - HF-single: snapshot_download returns a dir with one .safetensors → returned
-- HF-multi-warn: multiple .safetensors → first returned + warning logged
+- HF-multi-raises: multiple .safetensors → ValueError (ambiguous)
 - HF-zero-raises: no .safetensors → FileNotFoundError
 """
 
@@ -35,25 +35,19 @@ def test_hf_single(tmp_path, monkeypatch):
     assert result == str(sft)
 
 
-def test_hf_multi_warn(tmp_path, monkeypatch, caplog):
+def test_hf_multi_raises(tmp_path, monkeypatch):
     repo_dir = tmp_path / "repo"
     repo_dir.mkdir()
-    files = [repo_dir / "a.safetensors", repo_dir / "b.safetensors"]
-    for f in files:
-        f.write_bytes(b"")
+    for name in ("a.safetensors", "b.safetensors"):
+        (repo_dir / name).write_bytes(b"")
 
     monkeypatch.setattr(
         "ltx_pipelines_mlx.utils._orchestration.snapshot_download",
         lambda path: str(repo_dir),
     )
 
-    import logging
-
-    with caplog.at_level(logging.WARNING):
-        result = resolve_lora_path("some-user/multi-lora")
-
-    assert result in {str(f) for f in files}
-    assert "Multiple .safetensors" in caplog.text
+    with pytest.raises(ValueError, match="Ambiguous"):
+        resolve_lora_path("some-user/multi-lora")
 
 
 def test_hf_zero_raises(tmp_path, monkeypatch):
