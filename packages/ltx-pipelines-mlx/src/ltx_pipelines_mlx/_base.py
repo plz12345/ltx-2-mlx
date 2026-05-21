@@ -99,7 +99,7 @@ class BasePipeline:
         self.prompt_encoder = _PromptEncoderBlock(self.model_dir, gemma_model_id)
         self.image_conditioner = _ImageConditionerBlock(self.model_dir)
         self.audio_conditioner = _AudioConditionerBlock(self.model_dir)
-        self.video_decoder_block = _VideoDecoderBlock(self.model_dir)
+        self.video_decoder_block = _VideoDecoderBlock(self.model_dir, verbose=self.verbose)
         self.audio_decoder_block = _AudioDecoderBlock(self.model_dir)
 
         self.dit: LTXModel | None = None

@@ -39,6 +39,7 @@ Differences vs upstream:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -49,6 +50,7 @@ from ltx_core_mlx.model.audio_vae.bwe import VocoderWithBWE
 from ltx_core_mlx.model.upsampler.model import LatentUpsampler
 from ltx_core_mlx.model.video_vae.video_vae import VideoDecoder as _VideoVAEDecoder
 from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder as _VideoVAEEncoder
+from ltx_core_mlx.model.video_vae.video_vae import _compute_decode_tiling
 from ltx_core_mlx.text_encoders.gemma.encoders.base_encoder import GemmaLanguageModel
 from ltx_core_mlx.text_encoders.gemma.feature_extractor import GemmaFeaturesExtractorV2
 from ltx_core_mlx.utils.memory import aggressive_cleanup
@@ -201,8 +203,9 @@ class VideoDecoder:
     mux with an audio file in one shot.
     """
 
-    def __init__(self, model_dir: str | Path) -> None:
+    def __init__(self, model_dir: str | Path, verbose: bool = True) -> None:
         self.model_dir = _resolve_model_dir(model_dir)
+        self.verbose = verbose
         self._decoder: _VideoVAEDecoder | None = None
 
     def load(self) -> _VideoVAEDecoder:
@@ -226,6 +229,15 @@ class VideoDecoder:
         audio_path: str | None = None,
     ) -> str:
         """Stream-decode the latent into an mp4 with optional audio mux."""
+        if self.verbose:
+            tiling = _compute_decode_tiling(video_latent.shape, frame_rate=frame_rate)
+            if tiling is not None and tiling.temporal_config is not None:
+                tc = tiling.temporal_config
+                print(
+                    f"[vae-decode tiled: tile_frames={tc.tile_size_in_frames} overlap={tc.tile_overlap_in_frames}]",
+                    file=sys.stderr,
+                    flush=True,
+                )
         decoder = self.load()
         decoder.decode_and_stream(video_latent, output_path, frame_rate=frame_rate, audio_path=audio_path)
         return output_path
