@@ -12,6 +12,7 @@ Every function takes its dependencies as arguments rather than
 
 from __future__ import annotations
 
+import sys
 import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,14 +44,11 @@ def resolve_lora_path(path: str) -> str:
     (e.g. ``"some-user/my-lora"``).  When a repo is downloaded its
     ``.safetensors`` files are collected; exactly one must be present.
     """
-    import logging
-
     local = Path(path)
     if local.exists():
         return str(local)
 
-    _logger = logging.getLogger(__name__)
-    _logger.info("Downloading LoRA from HuggingFace: %s", path)
+    print(f"Downloading LoRA from HuggingFace: {path}", file=sys.stderr)
     repo_dir = Path(snapshot_download(path))
     safetensors_files = list(repo_dir.glob("*.safetensors"))
     if not safetensors_files:
@@ -82,7 +80,7 @@ def fuse_pending_loras(
         resolved = resolve_lora_path(lora_path)
         lora_sd = loader.load(resolved, sd_ops=LTXV_LORA_COMFY_RENAMING_MAP)
         lora_sds.append(LoraStateDictWithStrength(state_dict=lora_sd, strength=strength))
-        print(f"  Fusing LoRA: {lora_path} (strength={strength:.2f})")
+        print(f"  Fusing LoRA: {lora_path} (strength={strength:.2f})", file=sys.stderr)
 
     fused_sd = apply_loras(model_sd=model_sd, lora_sd_and_strengths=lora_sds)
     return fused_sd.sd
