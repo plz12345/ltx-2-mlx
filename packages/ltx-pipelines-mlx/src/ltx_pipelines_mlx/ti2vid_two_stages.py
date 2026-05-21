@@ -84,7 +84,7 @@ def _build_teacache_controller(num_steps: int, thresh: float | None) -> TeaCache
 
 def _remap_lora_keys(lora_sd: dict[str, mx.array]) -> dict[str, mx.array]:
     """Remap LoRA keys from ComfyUI/diffusion_model format to MLX model format."""
-    return {(LTXV_LORA_COMFY_RENAMING_MAP.apply_to_key(k) or k): v for k, v in lora_sd.items()}
+    return {LTXV_LORA_COMFY_RENAMING_MAP.apply_to_key(k): v for k, v in lora_sd.items()}
 
 
 class TI2VidTwoStagesPipeline(BasePipeline):
