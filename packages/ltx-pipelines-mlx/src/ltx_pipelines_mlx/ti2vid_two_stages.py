@@ -11,6 +11,8 @@ Ported from ltx-pipelines/src/ltx_pipelines/ti2vid_two_stages.py
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import mlx.core as mx
 from mlx_arsenal.diffusion import TeaCacheController
 
@@ -140,7 +142,8 @@ class TI2VidTwoStagesPipeline(BasePipeline):
             self._swap_to_distilled_streamer()
             return
 
-        lora_path = self.model_dir / self._distilled_lora
+        lora_stem = Path(self._distilled_lora).stem
+        lora_path = self._resolve_safetensors(self.model_dir, lora_stem)
         if not lora_path.exists():
             raise FileNotFoundError(
                 f"Distilled LoRA not found: {lora_path}\n"
@@ -186,10 +189,11 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         from ltx_core_mlx.loader.sd_ops import LTXV_LORA_COMFY_RENAMING_MAP
 
         if abs(self._distilled_lora_strength - 1.0) <= 1e-6:
-            distilled_path = self.model_dir / "transformer-distilled.safetensors"
+            distilled_path = self._resolve_safetensors(self.model_dir, "transformer-distilled")
             if not distilled_path.exists():
                 raise FileNotFoundError(
-                    f"Pre-fused distilled transformer not found at {distilled_path}. "
+                    f"Pre-fused distilled transformer not found in {self.model_dir} "
+                    "(expected transformer-distilled*.safetensors). "
                     "low_ram_streaming for two-stage at LoRA strength 1.0 requires "
                     "the distilled file. Use: --model dgrauet/ltx-2.3-mlx-q8"
                 )

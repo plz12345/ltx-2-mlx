@@ -258,6 +258,21 @@ class BasePipeline:
             )
         return self._load_transformer_with_optional_streaming(dev_path)
 
+    @staticmethod
+    def _resolve_safetensors(model_dir: Path, stem: str) -> Path:
+        """Return the path for a (possibly versioned) safetensors file.
+
+        Tries ``{stem}.safetensors`` first (exact match), then globs for
+        ``{stem}-*.safetensors`` (e.g. ``transformer-distilled-1.1.safetensors``).
+        Returns the canonical exact path when nothing matches so callers
+        surface a clear FileNotFoundError.
+        """
+        exact = model_dir / f"{stem}.safetensors"
+        if exact.exists():
+            return exact
+        matches = sorted(model_dir.glob(f"{stem}*.safetensors"))
+        return matches[-1] if matches else exact
+
     def _load_transformer_with_optional_streaming(self, transformer_path: Path) -> LTXModel:
         """Load a transformer from ``transformer_path``; honors ``_pending_loras``.
 
@@ -359,8 +374,7 @@ class BasePipeline:
         if self.dit is None:
             transformer_path = model_dir / "transformer.safetensors"
             if not transformer_path.exists():
-                # Fallback: try transformer-distilled.safetensors (mlx-forge dual-variant layout)
-                transformer_path = model_dir / "transformer-distilled.safetensors"
+                transformer_path = self._resolve_safetensors(model_dir, "transformer-distilled")
 
             self.dit = self._load_transformer_with_optional_streaming(transformer_path)
 
