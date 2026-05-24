@@ -223,13 +223,19 @@ class TI2VidTwoStagesPipeline(BasePipeline):
         object.__setattr__(self.dit, "_lora_sources", existing)
         aggressive_cleanup()
 
-    def _load_upsampler(self, name: str = "spatial_upscaler_x2_v1_1") -> None:
+    def _load_upsampler(self) -> None:
         """Load upsampler from config and weights."""
         import json
 
-        config_path = self.model_dir / f"{name}_config.json"
-        weights_path = self.model_dir / f"{name}.safetensors"
+        # Try new v1.1+ naming, then old naming
+        weights_path = self.model_dir / "spatial_upscaler_x2_v1_1.safetensors"
+        for stem in ["ltx-2.3-spatial-upscaler-x2", "spatial_upscaler_x2_v1_1"]:
+            resolved = self._resolve_safetensors(self.model_dir, stem)
+            if resolved.exists():
+                weights_path = resolved
+                break
 
+        config_path = self.model_dir / f"{weights_path.stem}_config.json"
         if config_path.exists():
             config = json.loads(config_path.read_text()).get("config", {})
             self.upsampler = LatentUpsampler.from_config(config)
@@ -237,8 +243,12 @@ class TI2VidTwoStagesPipeline(BasePipeline):
             self.upsampler = LatentUpsampler()
 
         if weights_path.exists():
-            weights = load_split_safetensors(weights_path, prefix=f"{name}.")
-            self.upsampler.load_weights(list(weights.items()))
+            raw = load_split_safetensors(weights_path)
+            # Old format keys are prefixed with the stem; new format uses bare keys.
+            stem_prefix = weights_path.stem + "."
+            if raw and all(k.startswith(stem_prefix) for k in raw):
+                raw = {k[len(stem_prefix) :]: v for k, v in raw.items()}
+            self.upsampler.load_weights(list(raw.items()))
         aggressive_cleanup()
 
     def load(self) -> None:
