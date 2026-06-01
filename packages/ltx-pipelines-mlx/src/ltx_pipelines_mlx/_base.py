@@ -262,16 +262,17 @@ class BasePipeline:
     def _resolve_safetensors(model_dir: Path, stem: str) -> Path:
         """Return the path for a (possibly versioned) safetensors file.
 
-        Tries ``{stem}.safetensors`` first (exact match), then globs for
-        ``{stem}-*.safetensors`` (e.g. ``transformer-distilled-1.1.safetensors``).
-        Returns the canonical exact path when nothing matches so callers
+        Prefers explicitly versioned files (``{stem}-*.safetensors``, e.g.
+        ``transformer-distilled-1.1.safetensors``) over the unversioned exact
+        name, taking the alphabetically latest when multiple versions exist.
+        Falls back to ``{stem}.safetensors`` when no versioned file is found,
+        and returns the canonical exact path when nothing exists so callers
         surface a clear FileNotFoundError.
         """
-        exact = model_dir / f"{stem}.safetensors"
-        if exact.exists():
-            return exact
-        matches = sorted(model_dir.glob(f"{stem}*.safetensors"))
-        return matches[-1] if matches else exact
+        versioned = sorted(model_dir.glob(f"{stem}-*.safetensors"))
+        if versioned:
+            return versioned[-1]
+        return model_dir / f"{stem}.safetensors"
 
     def _load_transformer_with_optional_streaming(self, transformer_path: Path) -> LTXModel:
         """Load a transformer from ``transformer_path``; honors ``_pending_loras``.

@@ -312,27 +312,28 @@ class TestResolveSafetensors:
 
     def _resolve(self, model_dir: Path, stem: str) -> Path:
         from ltx_pipelines_mlx._base import BasePipeline
+
         return BasePipeline._resolve_safetensors(model_dir, stem)
 
-    def test_exact_exists(self, tmp_path: Path) -> None:
-        """Returns exact path when unversioned file is present."""
+    def test_exact_only(self, tmp_path: Path) -> None:
+        """Falls back to exact path when no versioned file exists."""
         (tmp_path / "transformer-distilled.safetensors").touch()
         result = self._resolve(tmp_path, "transformer-distilled")
         assert result.name == "transformer-distilled.safetensors"
 
-    def test_versioned_fallback(self, tmp_path: Path) -> None:
-        """Falls back to versioned file when exact name is absent."""
+    def test_versioned_preferred(self, tmp_path: Path) -> None:
+        """Versioned file is returned when present."""
         (tmp_path / "transformer-distilled-1.1.safetensors").touch()
         result = self._resolve(tmp_path, "transformer-distilled")
         assert result.name == "transformer-distilled-1.1.safetensors"
         assert result.exists()
 
-    def test_exact_beats_versioned(self, tmp_path: Path) -> None:
-        """Exact match wins when both exact and versioned files exist."""
+    def test_versioned_beats_exact(self, tmp_path: Path) -> None:
+        """Versioned wins over unversioned when both exist."""
         (tmp_path / "transformer-distilled.safetensors").touch()
         (tmp_path / "transformer-distilled-1.1.safetensors").touch()
         result = self._resolve(tmp_path, "transformer-distilled")
-        assert result.name == "transformer-distilled.safetensors"
+        assert result.name == "transformer-distilled-1.1.safetensors"
 
     def test_latest_version_selected(self, tmp_path: Path) -> None:
         """When multiple versioned files exist, the alphabetically last is returned."""
