@@ -90,9 +90,7 @@ def preprocess_dataset(
         raise FileNotFoundError(f"Videos directory not found: {videos_path}")
 
     # Discover video files (recursive, so per-source subfolders from `ltx slice` work)
-    video_files = sorted(
-        f for f in videos_path.rglob("*") if f.suffix.lower() in VIDEO_EXTENSIONS and f.is_file()
-    )
+    video_files = sorted(f for f in videos_path.rglob("*") if f.suffix.lower() in VIDEO_EXTENSIONS and f.is_file())
     if not video_files:
         raise ValueError(f"No video files found in {videos_path}")
 

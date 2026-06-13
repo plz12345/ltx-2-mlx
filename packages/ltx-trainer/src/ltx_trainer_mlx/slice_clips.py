@@ -258,11 +258,11 @@ def slice_videos(
     for video_file in video_files:
         info = probe_video_info(str(video_file))
         if not info.has_audio:
-            logger.warning("Source %s has no audio stream — its clips will be unusable for audio training.", video_file.name)
+            logger.warning(
+                "Source %s has no audio stream — its clips will be unusable for audio training.", video_file.name
+            )
 
-        spans = _spans_for_source(
-            info.duration, interval, tc_path, min_length, max_clips, sample, skip_start, skip_end
-        )
+        spans = _spans_for_source(info.duration, interval, tc_path, min_length, max_clips, sample, skip_start, skip_end)
         print(f"{video_file.name}: {info.duration:.0f}s → {len(spans)} clips @ {res}/{fps}fps ({fit})")
         total += _slice_one_source(
             video_file=video_file,
