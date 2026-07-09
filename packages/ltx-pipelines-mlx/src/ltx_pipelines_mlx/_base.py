@@ -10,7 +10,9 @@ Lightricks/LTX-2 design where each pipeline file owns its API.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mlx.core as mx
 
@@ -26,6 +28,11 @@ from ltx_core_mlx.utils.memory import aggressive_cleanup
 from ltx_core_mlx.utils.weights import apply_quantization, load_split_safetensors
 from ltx_pipelines_mlx.utils.constants import DEFAULT_NEGATIVE_PROMPT
 from ltx_pipelines_mlx.utils.progress import phase
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ltx_core_mlx.conditioning.prompt_relay import PromptRelayInput
 
 
 class BasePipeline:
@@ -429,12 +436,14 @@ class BasePipeline:
     # Prompt Relay (temporal cross-attention prompt gating)
     # ------------------------------------------------------------------
 
-    def _prompt_relay_setup(self, prompt: str, prompt_relay):
+    def _prompt_relay_setup(
+        self, prompt: str, prompt_relay: PromptRelayInput | None
+    ) -> tuple[str, list[tuple[int, int]] | None]:
         """Resolve the prompt actually encoded + per-segment token ranges.
 
         With Prompt Relay active, the encoded (positive) prompt is the global
         prompt followed by the space-joined local prompts; the returned token
-        ranges index those locals for :meth:`_prompt_relay_mask`. Returns
+        ranges index those locals for :meth:`_prompt_relay_mask_builder`. Returns
         ``(prompt, None)`` when Prompt Relay is off.
         """
         if prompt_relay is None:
@@ -448,44 +457,51 @@ class BasePipeline:
 
         self._load_text_encoder()
         tokenizer = self.text_encoder._tokenizer
-        return map_token_ranges(tokenizer, prompt, prompt_relay.local_prompts)
+        max_length = int(os.environ.get("LTX2_GEMMA_MAX_LENGTH", "1024"))
+        return map_token_ranges(
+            tokenizer, prompt, prompt_relay.local_prompts, max_length=max_length
+        )
 
     @staticmethod
-    def _prompt_relay_mask(
-        prompt_relay,
-        token_ranges,
-        latent_f: int,
-        latent_h: int,
-        latent_w: int,
-        num_video_tokens: int,
+    def _prompt_relay_mask_builder(
+        prompt_relay: PromptRelayInput | None,
+        token_ranges: list[tuple[int, int]] | None,
         num_text_tokens: int,
-    ):
-        """Build the additive video->text cross-attention bias for one stage.
+    ) -> Callable[[int, int, int, int], mx.array | None]:
+        """Return a per-stage builder for the additive video->text cross-attn bias.
 
-        Rebuilt per stage because tokens-per-frame (``latent_h * latent_w``)
-        differs between half- and full-resolution stages. Returns ``None`` when
-        Prompt Relay is off (``token_ranges is None``).
+        The returned closure takes only the stage-varying dims
+        ``(latent_f, latent_h, latent_w, num_video_tokens)`` — a single call site
+        can't silently mis-order the fixed args — and rebuilds the mask each stage
+        because tokens-per-frame (``latent_h * latent_w``) differs between half- and
+        full-resolution stages. The closure returns ``None`` when Prompt Relay is
+        off (``token_ranges is None``).
         """
         if token_ranges is None:
-            return None
+            return lambda latent_f, latent_h, latent_w, num_video_tokens: None
         from ltx_core_mlx.conditioning.prompt_relay import (
             build_relay_mask,
             distribute_segment_lengths,
         )
 
-        seg_lengths = distribute_segment_lengths(
-            len(prompt_relay.local_prompts), latent_f, prompt_relay.segment_lengths
-        )
-        return build_relay_mask(
-            token_ranges=token_ranges,
-            segment_lengths=seg_lengths,
-            num_video_tokens=num_video_tokens,
-            tokens_per_frame=latent_h * latent_w,
-            latent_frames=latent_f,
-            num_text_tokens=num_text_tokens,
-            epsilon=prompt_relay.epsilon,
-            strength=prompt_relay.strength,
-        )
+        def _build(
+            latent_f: int, latent_h: int, latent_w: int, num_video_tokens: int
+        ) -> mx.array:
+            seg_lengths = distribute_segment_lengths(
+                len(prompt_relay.local_prompts), latent_f, prompt_relay.segment_lengths
+            )
+            return build_relay_mask(
+                token_ranges=token_ranges,
+                segment_lengths=seg_lengths,
+                num_video_tokens=num_video_tokens,
+                tokens_per_frame=latent_h * latent_w,
+                latent_frames=latent_f,
+                num_text_tokens=num_text_tokens,
+                epsilon=prompt_relay.epsilon,
+                strength=prompt_relay.strength,
+            )
+
+        return _build
 
     @staticmethod
     def _pre_denoise_flush(video_state: LatentState, audio_state: LatentState) -> None:

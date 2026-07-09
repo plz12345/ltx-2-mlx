@@ -15,6 +15,17 @@ from typing import NamedTuple
 from ltx_pipelines_mlx.utils.media_io import DEFAULT_IMAGE_CRF
 
 
+def _append_to_dest(namespace: argparse.Namespace, dest: str, item: object) -> None:
+    """Append ``item`` to the namespace list at ``dest`` (creating it if absent).
+
+    Shared by the repeatable list actions (:class:`ImageAction`,
+    :class:`SegmentAction`) so their append-to-dest handling can't drift.
+    """
+    existing = getattr(namespace, dest, None) or []
+    existing.append(item)
+    setattr(namespace, dest, existing)
+
+
 class ImageConditioningInput(NamedTuple):
     """One image conditioning entry for multi-anchor I2V.
 
@@ -85,9 +96,7 @@ class ImageAction(argparse.Action):
             crf=crf,
         )
 
-        existing = getattr(namespace, self.dest, None) or []
-        existing.append(item)
-        setattr(namespace, self.dest, existing)
+        _append_to_dest(namespace, self.dest, item)
 
 
 class SegmentInput(NamedTuple):
@@ -133,9 +142,13 @@ class SegmentAction(argparse.Action):
             if length <= 0:
                 parser.error(f"{option_string}: LEN_FRAMES must be positive, got {length}")
 
-        existing = getattr(namespace, self.dest, None) or []
-        existing.append(SegmentInput(text=text, length=length))
-        setattr(namespace, self.dest, existing)
+        _append_to_dest(namespace, self.dest, SegmentInput(text=text, length=length))
 
 
-__all__ = ["DEFAULT_IMAGE_CRF", "ImageAction", "ImageConditioningInput"]
+__all__ = [
+    "DEFAULT_IMAGE_CRF",
+    "ImageAction",
+    "ImageConditioningInput",
+    "SegmentAction",
+    "SegmentInput",
+]

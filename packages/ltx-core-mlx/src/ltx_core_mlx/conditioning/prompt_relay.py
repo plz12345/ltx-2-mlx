@@ -64,6 +64,7 @@ def map_token_ranges(
     tokenizer,
     global_prompt: str,
     local_prompts: list[str],
+    max_length: int | None = None,
 ) -> tuple[str, list[tuple[int, int]]]:
     """Build the combined prompt and each local prompt's ``[start, end)`` token range.
 
@@ -75,6 +76,10 @@ def map_token_ranges(
         tokenizer: mlx-lm tokenizer (``pipe.prompt_encoder._text_encoder._tokenizer``).
         global_prompt: Prompt applied to every frame.
         local_prompts: Ordered per-segment prompts, gated to their time windows.
+        max_length: Encoder sequence limit (``LTX2_GEMMA_MAX_LENGTH``). When set,
+            a combined prompt exceeding it is rejected: the encoder left-truncates
+            (keeps the last ``max_length`` tokens), which shifts every column and
+            makes the ranges point at the wrong tokens — unrecoverable, so fail fast.
 
     Returns:
         ``(combined_prompt, token_ranges)`` where ``combined_prompt`` is what the
@@ -106,6 +111,13 @@ def map_token_ranges(
         token_ranges.append((prev_len, cur_len))
         prev_len = cur_len
 
+    if max_length is not None and len(tokenizer.encode(combined_prompt)) > max_length:
+        raise ValueError(
+            f"Prompt Relay combined prompt exceeds the encoder max length "
+            f"({max_length}); the encoder left-truncates, which would misalign "
+            "every segment's token range. Shorten the prompts/segments or raise "
+            "LTX2_GEMMA_MAX_LENGTH."
+        )
     return combined_prompt, token_ranges
 
 
@@ -159,7 +171,9 @@ def _build_segments(
         if length <= 0:
             frame_cursor += length
             continue
-        midpoint = (2 * frame_cursor + length) / 2.0
+        # Floor-divide to match the reference (WhatDreamsCost build_segments):
+        # an odd-length segment keeps one fully-free anchor frame at its center.
+        midpoint = float((2 * frame_cursor + length) // 2)
         window = max(length // 2 - 2, 0)
         segments.append(
             _Segment(
@@ -207,7 +221,27 @@ def build_relay_mask(
         where a text range is penalised for a video frame outside its window.
     """
     # Reference uses a constant sigma = 1/ln(1/epsilon) regardless of segment length.
-    sigma = 1.0 / math.log(1.0 / epsilon) if 0.0 < epsilon < 1.0 else 0.1448
+    # Reject out-of-range epsilon rather than silently substituting a default: e.g.
+    # epsilon=1.0 means "no falloff" (sigma -> inf) but a fallback would produce the
+    # opposite (sharp default gating).
+    if not 0.0 < epsilon < 1.0:
+        raise ValueError(f"Prompt Relay epsilon must be in (0, 1), got {epsilon}")
+    sigma = 1.0 / math.log(1.0 / epsilon)
+    # A zero-length beat has no temporal window; leaving its columns at cost 0 would
+    # let it attend to *every* frame — the inverse of gating. Fail fast instead.
+    if any(length <= 0 for length in segment_lengths):
+        raise ValueError(
+            f"Prompt Relay segment lengths {segment_lengths} contain a zero-length "
+            "beat: that segment would attend to every frame instead of being gated. "
+            "Give it an explicit length or drop a segment."
+        )
+    # numpy silently clips out-of-bounds column slices, which would ungate a segment
+    # without warning. Reject ranges past the text axis.
+    if any(end > num_text_tokens for _, end in token_ranges):
+        raise ValueError(
+            f"Prompt Relay token ranges {token_ranges} exceed the text axis "
+            f"(num_text_tokens={num_text_tokens})"
+        )
     segments = _build_segments(token_ranges, segment_lengths, strength)
     cost = np.zeros((num_video_tokens, num_text_tokens), dtype=np.float32)
 

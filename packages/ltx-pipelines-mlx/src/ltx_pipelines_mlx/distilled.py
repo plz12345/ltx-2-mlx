@@ -153,17 +153,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
         # Per-stage Prompt Relay mask builder. Ranges were computed pre-encode;
         # the mask is rebuilt each stage because tokens-per-frame (H*W) differs.
         num_text_tokens = video_embeds.shape[1]
-
-        def _relay_mask(latent_f: int, latent_h: int, latent_w: int, num_video_tokens: int):
-            return self._prompt_relay_mask(
-                prompt_relay,
-                relay_token_ranges,
-                latent_f,
-                latent_h,
-                latent_w,
-                num_video_tokens,
-                num_text_tokens,
-            )
+        relay_mask = self._prompt_relay_mask_builder(prompt_relay, relay_token_ranges, num_text_tokens)
 
         # --- Load distilled DiT + VAE encoder + upsampler ---
         self.load()
@@ -242,7 +232,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             video_text_embeds=video_embeds,
             audio_text_embeds=audio_embeds,
             sigmas=sigmas_1,
-            video_cross_attention_mask=_relay_mask(F, H_half, W_half, video_state.latent.shape[1]),
+            video_cross_attention_mask=relay_mask(F, H_half, W_half, video_state.latent.shape[1]),
         )
         if self.low_memory:
             aggressive_cleanup()
@@ -326,7 +316,7 @@ class DistilledPipeline(TI2VidTwoStagesPipeline):
             video_text_embeds=video_embeds,
             audio_text_embeds=audio_embeds,
             sigmas=sigmas_2,
-            video_cross_attention_mask=_relay_mask(F, H_full, W_full, video_state_2.latent.shape[1]),
+            video_cross_attention_mask=relay_mask(F, H_full, W_full, video_state_2.latent.shape[1]),
         )
         if self.low_memory:
             aggressive_cleanup()

@@ -145,6 +145,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
         encode_prompt, relay_token_ranges = self._prompt_relay_setup(prompt, prompt_relay)
         video_embeds, audio_embeds, neg_video_embeds, neg_audio_embeds = self._encode_text_with_negative(encode_prompt)
         num_text_tokens = video_embeds.shape[1]
+        relay_mask = self._prompt_relay_mask_builder(prompt_relay, relay_token_ranges, num_text_tokens)
 
         # --- Load dev DiT + VAE encoder ---
         self.load()
@@ -250,15 +251,7 @@ class TI2VidOneStagePipeline(TI2VidTwoStagesPipeline):
             video_guider_factory=video_factory,
             audio_guider_factory=audio_factory,
             sigmas=sigmas,
-            video_cross_attention_mask=self._prompt_relay_mask(
-                prompt_relay,
-                relay_token_ranges,
-                F,
-                H,
-                W,
-                video_state.latent.shape[1],
-                num_text_tokens,
-            ),
+            video_cross_attention_mask=relay_mask(F, H, W, video_state.latent.shape[1]),
             tap=tap,
         )
         if self.low_memory:
