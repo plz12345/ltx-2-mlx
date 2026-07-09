@@ -230,7 +230,7 @@ class TestQuantizedLoraFusion:
     "[broadcast_shapes] Shapes (O,2*I) and (O,I) cannot be broadcast".
     """
 
-    def _quantized_model_sd(self, weight, bits, group_size):
+    def _quantized_model_sd(self, weight: mx.array, bits: int, group_size: int) -> StateDict:
         q, scales, biases = mx.quantize(weight, bits=bits, group_size=group_size)
         return StateDict(
             sd={"layer.weight": q, "layer.scales": scales, "layer.biases": biases},
@@ -238,7 +238,7 @@ class TestQuantizedLoraFusion:
             dtype=set(),
         )
 
-    def _lora(self, a, b):
+    def _lora(self, a: mx.array, b: mx.array) -> StateDict:
         return StateDict(
             sd={"layer.lora_A.weight": a, "layer.lora_B.weight": b},
             size=0,
@@ -246,7 +246,7 @@ class TestQuantizedLoraFusion:
         )
 
     @pytest.mark.parametrize(("bits", "group_size"), [(4, 32), (8, 64), (4, 64), (4, 128)])
-    def test_shapes_preserved(self, bits, group_size):
+    def test_shapes_preserved(self, bits: int, group_size: int) -> None:
         # in_features=128 (divisible by every group size under test), out=64, rank=4
         mx.random.seed(0)
         weight = mx.random.normal((64, 128))
@@ -262,7 +262,7 @@ class TestQuantizedLoraFusion:
         assert result.sd["layer.scales"].shape == orig["layer.scales"].shape
         assert result.sd["layer.biases"].shape == orig["layer.biases"].shape
 
-    def test_reconstructs_delta_g32(self):
+    def test_reconstructs_delta_g32(self) -> None:
         """Fusing into an int8/g32 weight recovers dequant(orig)+delta.
 
         Uses int8 so the quantization grid is fine enough to assert the fusion

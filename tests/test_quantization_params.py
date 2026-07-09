@@ -16,7 +16,11 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from ltx_core_mlx.utils.weights import _derive_quant_params, apply_quantization
+from ltx_core_mlx.utils.weights import (
+    _derive_quant_params,
+    apply_quantization,
+    derive_quant_params,
+)
 
 
 class TinyModel(nn.Module):
@@ -50,6 +54,33 @@ _PARAMS = [
 ]
 
 
+class TestDerivePureFunction:
+    """The shared, model-free ``derive_quant_params`` helper."""
+
+    @pytest.mark.parametrize(("bits", "group_size"), _PARAMS)
+    def test_recovers_exact_params(self, bits: int, group_size: int) -> None:
+        in_features = 128
+        packed_cols = in_features * bits // 32
+        scales_cols = in_features // group_size
+        assert derive_quant_params(in_features, packed_cols, scales_cols) == (bits, group_size)
+
+    def test_rejects_inexact_bit_packing(self) -> None:
+        # packed_cols that rounds toward bits=4 but is not an exact 32-bit packing
+        # of in_features would previously be coerced by the min/max clamp.
+        with pytest.raises(ValueError, match="exact bit-packing"):
+            derive_quant_params(in_features=128, packed_cols=17, scales_cols=4)
+
+    def test_rejects_indivisible_group_size(self) -> None:
+        # int4/g32 of in_features=128 -> packed_cols=16, but scales_cols=5 does not
+        # divide 128 evenly, so no uniform group_size exists.
+        with pytest.raises(ValueError, match="not divisible"):
+            derive_quant_params(in_features=128, packed_cols=16, scales_cols=5)
+
+    def test_rejects_nonpositive_shapes(self) -> None:
+        with pytest.raises(ValueError, match="positive shapes"):
+            derive_quant_params(in_features=0, packed_cols=16, scales_cols=4)
+
+
 class TestDeriveQuantParams:
     @pytest.mark.parametrize(("bits", "group_size"), _PARAMS)
     def test_recovers_exact_params(self, bits: int, group_size: int) -> None:
@@ -65,6 +96,21 @@ class TestDeriveQuantParams:
         # scales present but no corresponding model weight key
         weights = {"ghost.scales": mx.ones((4, 2))}
         assert _derive_quant_params(model, weights, {"ghost"}) is None
+
+    def test_skips_already_quantized_model_layer(self) -> None:
+        """A model layer that is already QuantizedLinear must be skipped.
+
+        Its ``.weight`` last dim is the packed column count, not in_features, so
+        deriving from it would yield garbage. With only such a layer available,
+        derivation finds no float reference and returns None.
+        """
+        model = TinyModel()
+        # Quantize the model in place so model.a is a QuantizedLinear.
+        weights = _quantize_model(TinyModel(), bits=4, group_size=32)
+        apply_quantization(model, weights)
+        assert isinstance(model.a, nn.QuantizedLinear)
+
+        assert _derive_quant_params(model, weights, {"a", "b"}) is None
 
 
 class TestApplyQuantization:
