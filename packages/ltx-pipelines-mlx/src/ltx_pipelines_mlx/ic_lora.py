@@ -108,9 +108,7 @@ class ICLoraPipeline(BasePipeline):
         if dev_transformer:
             dev_path = self.model_dir / dev_transformer
             if not dev_path.exists():
-                raise FileNotFoundError(
-                    f"--dev-transformer '{dev_transformer}' not found in model dir: {dev_path}"
-                )
+                raise FileNotFoundError(f"--dev-transformer '{dev_transformer}' not found in model dir: {dev_path}")
             self.dev_mode = True
             logger.info(f"Dev mode enabled: using {dev_transformer}")
 

@@ -981,7 +981,7 @@ def _cmd_ic_lora(args: argparse.Namespace) -> None:
         # _effective_lora_paths resolves + validates the distilled LoRA (raises
         # early if missing) and returns it appended after the task IC-LoRA(s).
         # A missing --dev-transformer already hard-fails in the constructor.
-        for path, strength in pipe._effective_lora_paths()[len(lora_paths):]:
+        for path, strength in pipe._effective_lora_paths()[len(lora_paths) :]:
             print(f"  Distilled LoRA (dev mode): {path} (strength={strength})")
 
     pipe.generate_and_save(
